@@ -36,4 +36,4 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
 # CLI declaration
-target-mailchimp-v2 = 'target_mailchimp_v2.target:TargetMailChimp-V2.cli'
+target-mailchimp-v2 = 'target_mailchimp_v2.target:TargetMailChimpV2.cli'
