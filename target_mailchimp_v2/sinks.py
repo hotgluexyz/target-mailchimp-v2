@@ -8,7 +8,6 @@ from singer_sdk.sinks import BatchSink
 
 
 class MailChimpV2Sink(BatchSink):
-
     max_size = 10000  # Max records to write in one batch
     list_id = None
     all_members = []
@@ -47,7 +46,6 @@ class MailChimpV2Sink(BatchSink):
             print("Error: {}".format(error.text))
 
     def process_record(self, record: dict, context: dict) -> None:
-
         first_name, *last_name = record["name"].split()
         last_name = " ".join(last_name)
         location = {
@@ -67,11 +65,16 @@ class MailChimpV2Sink(BatchSink):
                         "region": record["addresses"][0]["state"],
                     }
                 )
+        subscribed_status = self.config.get("subscribe_status", "subscribed")
+
+        # override status if it is found in the record
+        if record.get("subscribe_status"):
+            subscribed_status = record.get("subscribe_status")
 
         self.all_members.append(
             {
                 "email_address": record["email"],
-                "status": self.config.get("subscribe_status", "subscribed"),
+                "status": subscribed_status,
                 "merge_fields": {"FNAME": first_name, "LNAME": last_name},
                 "location": location,
             }
