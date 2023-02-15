@@ -69,7 +69,7 @@ class MailChimpV2Sink(BatchSink):
 
         # override status if it is found in the record
         if record.get("subscribe_status"):
-            subscribed_status = record.get("subscribed_status")
+            subscribed_status = record.get("subscribe_status")
 
         self.all_members.append(
             {
