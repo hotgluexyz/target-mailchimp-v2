@@ -95,5 +95,7 @@ class MailChimpV2Sink(BatchSink):
                     self.list_id, {"members": self.all_members, "update_existing": True}
                 )
                 print(response)
+                if response.get("error_count") > 0:
+                    raise Exception(response.get("errors"))
             except ApiClientError as error:
                 print("Error: {}".format(error.text))
