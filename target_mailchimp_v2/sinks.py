@@ -38,15 +38,16 @@ class MailChimpV2Sink(BatchSink):
             config_name = self.config.get("list_name")
             if "lists" in response:
                 for row in response["lists"]:
-                    if row["name"] == config_name:
+                    # NOTE: Making case insensitive to avoid issues
+                    if row["name"].lower() == config_name.lower():
                         self.list_id = row["id"]
 
-            print(response)
+            self.logger.info(response)
         except ApiClientError as error:
-            print("Error: {}".format(error.text))
+            self.logger.exception("Error: {}".format(error.text))
 
     def process_record(self, record: dict, context: dict) -> None:
-        if self.stream_name.lower() in ["customers", "contacts",'customer','contact']:
+        if self.stream_name.lower() in ["customers", "contacts", "customer", "contact"]:
             first_name, *last_name = record["name"].split()
             last_name = " ".join(last_name)
             location = {
@@ -82,8 +83,8 @@ class MailChimpV2Sink(BatchSink):
             )
 
     def process_batch(self, context: dict) -> None:
-        if self.stream_name.lower() in ["customers", "contacts",'customer','contact']:
-            if self.list_id is not None and len(self.all_members)>0:
+        if self.stream_name.lower() in ["customers", "contacts", "customer", "contact"]:
+            if self.list_id is not None and len(self.all_members) > 0:
                 try:
                     client = MailchimpMarketing.Client()
                     client.set_config(
@@ -94,10 +95,15 @@ class MailChimpV2Sink(BatchSink):
                     )
 
                     response = client.lists.batch_list_members(
-                        self.list_id, {"members": self.all_members, "update_existing": True}
+                        self.list_id,
+                        {"members": self.all_members, "update_existing": True},
                     )
-                    print(response)
+                    self.logger.info(response)
                     if response.get("error_count") > 0:
                         raise Exception(response.get("errors"))
                 except ApiClientError as error:
-                    print("Error: {}".format(error.text))
+                    self.logger.exception("Error: {}".format(error.text))
+            else:
+                self.logger.error(
+                    f"Failed to post because there was no list ID found for the list name {self.config.get('list_name')}!"
+                )
