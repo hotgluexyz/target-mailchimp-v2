@@ -46,56 +46,58 @@ class MailChimpV2Sink(BatchSink):
             print("Error: {}".format(error.text))
 
     def process_record(self, record: dict, context: dict) -> None:
-        first_name, *last_name = record["name"].split()
-        last_name = " ".join(last_name)
-        location = {
-            "latitude": 0,
-            "longitude": 0,
-            "gmtoff": 0,
-            "dstoff": 0,
-            "country_code": "",
-            "timezone": "",
-            "region": "",
-        }
-        if "addresses" in record:
-            if len(record["addresses"]) > 0:
-                location.update(
-                    {
-                        "country_code": record["addresses"][0]["country"],
-                        "region": record["addresses"][0]["state"],
-                    }
-                )
-        subscribed_status = self.config.get("subscribe_status", "subscribed")
-
-        # override status if it is found in the record
-        if record.get("subscribe_status"):
-            subscribed_status = record.get("subscribe_status")
-
-        self.all_members.append(
-            {
-                "email_address": record["email"],
-                "status": subscribed_status,
-                "merge_fields": {"FNAME": first_name, "LNAME": last_name},
-                "location": location,
+        if self.stream_name.lower() in ["customers", "contacts",'customer','contact']:
+            first_name, *last_name = record["name"].split()
+            last_name = " ".join(last_name)
+            location = {
+                "latitude": 0,
+                "longitude": 0,
+                "gmtoff": 0,
+                "dstoff": 0,
+                "country_code": "",
+                "timezone": "",
+                "region": "",
             }
-        )
+            if "addresses" in record:
+                if len(record["addresses"]) > 0:
+                    location.update(
+                        {
+                            "country_code": record["addresses"][0]["country"],
+                            "region": record["addresses"][0]["state"],
+                        }
+                    )
+            subscribed_status = self.config.get("subscribe_status", "subscribed")
+
+            # override status if it is found in the record
+            if record.get("subscribe_status"):
+                subscribed_status = record.get("subscribe_status")
+
+            self.all_members.append(
+                {
+                    "email_address": record["email"],
+                    "status": subscribed_status,
+                    "merge_fields": {"FNAME": first_name, "LNAME": last_name},
+                    "location": location,
+                }
+            )
 
     def process_batch(self, context: dict) -> None:
-        if self.list_id is not None:
-            try:
-                client = MailchimpMarketing.Client()
-                client.set_config(
-                    {
-                        "access_token": self.config.get("access_token"),
-                        "server": self.get_server(),
-                    }
-                )
+        if self.stream_name.lower() in ["customers", "contacts",'customer','contact']:
+            if self.list_id is not None and len(self.all_members)>0:
+                try:
+                    client = MailchimpMarketing.Client()
+                    client.set_config(
+                        {
+                            "access_token": self.config.get("access_token"),
+                            "server": self.get_server(),
+                        }
+                    )
 
-                response = client.lists.batch_list_members(
-                    self.list_id, {"members": self.all_members, "update_existing": True}
-                )
-                print(response)
-                if response.get("error_count") > 0:
-                    raise Exception(response.get("errors"))
-            except ApiClientError as error:
-                print("Error: {}".format(error.text))
+                    response = client.lists.batch_list_members(
+                        self.list_id, {"members": self.all_members, "update_existing": True}
+                    )
+                    print(response)
+                    if response.get("error_count") > 0:
+                        raise Exception(response.get("errors"))
+                except ApiClientError as error:
+                    print("Error: {}".format(error.text))
