@@ -59,14 +59,23 @@ class MailChimpV2Sink(BatchSink):
                 "timezone": "",
                 "region": "",
             }
+            address = None
             if "addresses" in record:
                 if len(record["addresses"]) > 0:
+                    address_dict = record["addresses"][0]
                     location.update(
                         {
-                            "country_code": record["addresses"][0]["country"],
-                            "region": record["addresses"][0]["state"],
+                            "country_code": address_dict["country"],
+                            "region": address_dict["state"],
                         }
                     )
+                    address = {
+                        "addr1": address_dict.get("line1"),
+                        "city": address_dict.get("city"),
+                        "state": address_dict.get("state"),
+                        "zip": address_dict.get("postalCode"),
+                        "country": address_dict.get("country")
+                    }
             subscribed_status = self.config.get("subscribe_status", "subscribed")
 
             # override status if it is found in the record
@@ -77,7 +86,7 @@ class MailChimpV2Sink(BatchSink):
                 {
                     "email_address": record["email"],
                     "status": subscribed_status,
-                    "merge_fields": {"FNAME": first_name, "LNAME": last_name},
+                    "merge_fields": {"FNAME": first_name, "LNAME": last_name, "ADDRESS": address},
                     "location": location,
                 }
             )
