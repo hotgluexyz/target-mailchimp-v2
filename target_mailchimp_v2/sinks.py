@@ -82,14 +82,26 @@ class MailChimpV2Sink(BatchSink):
             if record.get("subscribe_status"):
                 subscribed_status = record.get("subscribe_status")
 
-            self.all_members.append(
-                {
-                    "email_address": record["email"],
-                    "status": subscribed_status,
-                    "merge_fields": {"FNAME": first_name, "LNAME": last_name, "ADDRESS": address},
-                    "location": location,
-                }
-            )
+            member_dict = {
+                "email_address": record["email"],
+                "status": subscribed_status,
+                "merge_fields": {},
+                "location": location,
+            }
+            merge_fields = {
+                "FNAME": first_name,
+                "LNAME": last_name,
+                "ADDRESS": address
+            }
+            keys_to_remove = []
+            for field, value in merge_fields.items():
+                if value == None:
+                    keys_to_remove.append(field)
+            
+            for key in keys_to_remove:
+                merge_fields.pop(key)
+
+            self.all_members.append(member_dict)
 
     def process_batch(self, context: dict) -> None:
         if self.stream_name.lower() in ["customers", "contacts", "customer", "contact"]:
