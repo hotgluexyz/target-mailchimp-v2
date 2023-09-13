@@ -82,6 +82,7 @@ class MailChimpV2Sink(BatchSink):
             if record.get("subscribe_status"):
                 subscribed_status = record.get("subscribe_status")
 
+            # Build member dictionary and adds merge_fields without content
             member_dict = {
                 "email_address": record["email"],
                 "status": subscribed_status,
@@ -93,6 +94,8 @@ class MailChimpV2Sink(BatchSink):
                 "LNAME": last_name,
                 "ADDRESS": address
             }
+            # Iterate through all of the possible merge fields, if one is None
+            # then it is removed from the dictionary
             keys_to_remove = []
             for field, value in merge_fields.items():
                 if value == None:
