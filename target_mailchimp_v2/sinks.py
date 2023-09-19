@@ -24,6 +24,10 @@ class MailChimpV2Sink(BatchSink):
         metadata = requests.get(
             "https://login.mailchimp.com/oauth2/metadata", headers=header
         ).json()
+        
+        if "error" in metadata:
+            raise Exception(metadata["error"])
+        
         return metadata["dc"]
 
     def start_batch(self, context: dict) -> None:
