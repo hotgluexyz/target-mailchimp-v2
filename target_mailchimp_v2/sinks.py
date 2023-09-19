@@ -108,6 +108,7 @@ class MailChimpV2Sink(BatchSink):
             for key in keys_to_remove:
                 merge_fields.pop(key)
 
+            member_dict["merge_fields"] = merge_fields
             self.all_members.append(member_dict)
 
     def process_batch(self, context: dict) -> None:
