@@ -57,8 +57,13 @@ class MailChimpV2Sink(BatchSink):
 
     def process_record(self, record: dict, context: dict) -> None:
         if self.stream_name.lower() in ["customers", "contacts", "customer", "contact"]:
-            first_name, *last_name = record["name"].split()
-            last_name = " ".join(last_name)
+            if record.get("name"):
+                first_name, *last_name = record["name"].split()
+                last_name = " ".join(last_name)
+            else:
+                first_name = record.get("first_name") or ""
+                last_name = record.get("last_name") or ""
+
             location = {
                 "latitude": 0,
                 "longitude": 0,
