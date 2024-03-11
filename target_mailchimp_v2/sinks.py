@@ -42,6 +42,11 @@ class MailChimpV2Sink(BatchSink):
             config_name = self.config.get("list_name")
             if "lists" in response:
                 for row in response["lists"]:
+                    # Handle case where they don't set a list_name in config
+                    if not config_name:
+                        self.list_id = row["id"]
+                        break
+
                     # NOTE: Making case insensitive to avoid issues
                     if row["name"].lower() == config_name.lower():
                         self.list_id = row["id"]

@@ -15,7 +15,7 @@ class TargetMailChimpV2(Target):
             description="access_token from oAuth",
             required=True,
         ),
-        th.Property("list_name", th.StringType, required=True),
+        th.Property("list_name", th.StringType, required=False),
     ).to_dict()
     default_sink_class = MailChimpV2Sink
 
