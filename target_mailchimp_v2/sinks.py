@@ -5,19 +5,37 @@ import mailchimp_marketing as MailchimpMarketing
 import requests
 from mailchimp_marketing.api_client import ApiClientError
 from singer_sdk.sinks import BatchSink
+from target_hotglue.client import HotglueBatchSink
 
-
-class MailChimpV2Sink(BatchSink):
+class MailChimpV2Sink(HotglueBatchSink):
     max_size = 10000  # Max records to write in one batch
     list_id = None
-    all_members = []
     server = None
+
+    @property
+    def name(self) -> str:
+        return self.stream_name
+
+    @property
+    def endpoint(self) -> str:
+        raise ""
+
+    @property
+    def base_url(self) -> str:
+        return ""
+
+    @property
+    def unified_schema(self):
+        return None
 
     def get_server(self):
         if self.server is None:
             self.server = self.get_server_meta_data()
 
         return self.server
+
+    def preprocess_record(self, record: dict, context: dict) -> dict:
+        return record
 
     def get_server_meta_data(self):
         header = {"Authorization": f"OAuth {self.config.get('access_token')}"}
@@ -55,7 +73,7 @@ class MailChimpV2Sink(BatchSink):
         except ApiClientError as error:
             self.logger.exception("Error: {}".format(error.text))
 
-    def process_record(self, record: dict, context: dict) -> None:
+    def process_batch_record(self, record: dict, index: int) -> dict:
         if self.stream_name.lower() in ["customers", "contacts", "customer", "contact"]:
             if record.get("name"):
                 first_name, *last_name = record["name"].split()
@@ -119,11 +137,11 @@ class MailChimpV2Sink(BatchSink):
                 merge_fields.pop(key)
 
             member_dict["merge_fields"] = merge_fields
-            self.all_members.append(member_dict)
+            return member_dict
 
-    def process_batch(self, context: dict) -> None:
+    def make_batch_request(self, records):
         if self.stream_name.lower() in ["customers", "contacts", "customer", "contact"]:
-            if self.list_id is not None and len(self.all_members) > 0:
+            if self.list_id is not None and len(records) > 0:
                 try:
                     client = MailchimpMarketing.Client()
                     client.set_config(
@@ -135,14 +153,38 @@ class MailChimpV2Sink(BatchSink):
 
                     response = client.lists.batch_list_members(
                         self.list_id,
-                        {"members": self.all_members, "update_existing": True},
+                        {"members": records, "update_existing": True},
                     )
-                    self.logger.info(response)
-                    if response.get("error_count") > 0:
-                        raise Exception(response.get("errors"))
+
+                    return response
                 except ApiClientError as error:
                     self.logger.exception("Error: {}".format(error.text))
             else:
-                self.logger.error(
+                raise Exception(
                     f"Failed to post because there was no list ID found for the list name {self.config.get('list_name')}!"
                 )
+
+    def handle_batch_response(self, response) -> dict:
+        """
+        This method should return a dict.
+        It's recommended that you return a key named "state_updates".
+        This key should be an array of all state updates
+        """
+        state_updates = []
+        members = response.get("new_members") + response.get("updated_members")
+
+        for member in members:
+            state_updates.append({
+                "success": True,
+                "id": member["id"],
+                "externalId": member.get("email_address")
+            })
+
+        for error in response.get("errors"):
+            state_updates.append({
+                "success": False,
+                "error": error.get("error"),
+                "externalId": error.get("email_address")
+            })
+
+        return {"state_updates": state_updates}
