@@ -11,6 +11,7 @@ class MailChimpV2Sink(HotglueBatchSink):
     max_size = 10000  # Max records to write in one batch
     list_id = None
     server = None
+    custom_fields = []
 
     @property
     def name(self) -> str:
@@ -126,6 +127,14 @@ class MailChimpV2Sink(HotglueBatchSink):
                 "LNAME": last_name,
                 "ADDRESS": address
             }
+            #Check and populate custom fields as merge fields    
+            if "custom_fields" in record:
+                if isinstance(record['custom_fields'],list):
+                    for field in  record['custom_fields']:
+                        if "name" in field:
+                            merge_fields.update({ field['name']:field['value']})
+                            if field['name'] not in self.custom_fields:
+                                self.custom_fields.append(field['name']) 
             # Iterate through all of the possible merge fields, if one is None
             # then it is removed from the dictionary
             keys_to_remove = []
@@ -138,6 +147,18 @@ class MailChimpV2Sink(HotglueBatchSink):
 
             member_dict["merge_fields"] = merge_fields
             return member_dict
+        
+    def verify_add_merge_field(self,client):
+        if self.custom_fields:
+            merge_fields = client.lists.get_list_merge_fields(self.list_id)
+            if merge_fields:
+                merge_fields_list = []
+                for merge_field in merge_fields['merge_fields']:
+                    merge_fields_list.append(merge_field['name'])
+            for custom_field in self.custom_fields:
+                if custom_field not in merge_fields_list:
+                    #Add merge field
+                    client.lists.add_list_merge_field(self.list_id,{"name":custom_field,"type":"text"})
 
     def make_batch_request(self, records):
         if self.stream_name.lower() in ["customers", "contacts", "customer", "contact"]:
@@ -150,7 +171,8 @@ class MailChimpV2Sink(HotglueBatchSink):
                             "server": self.get_server(),
                         }
                     )
-
+                    #Check and add merge field to the list if required.
+                    res = self.verify_add_merge_field(client)
                     response = client.lists.batch_list_members(
                         self.list_id,
                         {"members": records, "update_existing": True},
