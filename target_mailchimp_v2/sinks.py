@@ -83,13 +83,27 @@ class MailChimpV2Sink(BatchSink):
                             "region": address_dict["state"],
                         }
                     )
+
                     address = {
                         "addr1": address_dict.get("line1"),
                         "city": address_dict.get("city"),
                         "state": address_dict.get("state"),
-                        "zip": address_dict.get("postalCode"),
-                        "country": address_dict.get("country")
+                        "zip": address_dict.get("postalCode", address_dict.get("postal_code")),
                     }
+
+                    if address_dict.get("country"):
+                        address["country"] = address_dict.get("country")
+                    
+                    if address_dict.get("line2"):
+                        address["addr2"] = address_dict.get("line2")
+
+                    # mailchimp has a strict validation on adress types addr1, city, state and zip fields must be populated
+                    required_fields = ["addr1", "city", "state", "zip"]
+                    for key, value in address.items():
+                        if key in required_fields and not value:
+                            raise Exception(f"Any of these fields is either missing or empty in address line1, city, zip, postal_code for record with email {record['email']}")
+                        
+                
             subscribed_status = self.config.get("subscribe_status", "subscribed")
 
             # override status if it is found in the record
@@ -108,6 +122,13 @@ class MailChimpV2Sink(BatchSink):
                 "LNAME": last_name,
                 "ADDRESS": address
             }
+
+            # add phone number if exists
+            if record.get("phone_numbers"):
+                phone_dict = record["phone_numbers"][0]
+                if phone_dict.get("number"):
+                    merge_fields.update({"PHONE": phone_dict.get("number")})
+
             # Iterate through all of the possible merge fields, if one is None
             # then it is removed from the dictionary
             keys_to_remove = []
