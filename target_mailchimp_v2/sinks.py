@@ -11,6 +11,7 @@ class MailChimpV2Sink(HotglueBatchSink):
     max_size = 10000  # Max records to write in one batch
     list_id = None
     server = None
+    external_ids_dict = {}
 
     @property
     def name(self) -> str:
@@ -128,6 +129,10 @@ class MailChimpV2Sink(HotglueBatchSink):
             if record.get("subscribe_status"):
                 subscribed_status = record.get("subscribe_status")
 
+            # validate if email has been provided
+            if not record["email"]:
+                raise Exception(f"Email was not provided and it's a required value")
+
             # Build member dictionary and adds merge_fields without content
             member_dict = {
                 "email_address": record["email"],
@@ -158,6 +163,10 @@ class MailChimpV2Sink(HotglueBatchSink):
                 merge_fields.pop(key)
 
             member_dict["merge_fields"] = merge_fields
+
+            # add email and externalid to externalid dict for state
+            self.external_ids_dict[record["email"]] = record.get("externalId", record["email"])
+
             return member_dict
 
     def make_batch_request(self, records):
@@ -198,14 +207,14 @@ class MailChimpV2Sink(HotglueBatchSink):
             state_updates.append({
                 "success": True,
                 "id": member["id"],
-                "externalId": member.get("email_address")
+                "externalId": self.external_ids_dict.get(member.get("email_address"))
             })
 
         for error in response.get("errors"):
             state_updates.append({
                 "success": False,
                 "error": error.get("error"),
-                "externalId": error.get("email_address")
+                "externalId": self.external_ids_dict.get(error.get("email_address"))
             })
 
         return {"state_updates": state_updates}
