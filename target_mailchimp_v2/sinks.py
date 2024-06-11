@@ -92,46 +92,52 @@ class MailChimpV2Sink(HotglueBatchSink):
                 "timezone": "",
                 "region": "",
             }
+
+            # validate if email has been provided, it's a required field
+            if not record.get("email"):
+                return({"map_error":"Email was not provided and it's a required value", "externalId": record.get("externalId")})
+            
             address = None
-            if "addresses" in record:
-                if len(record["addresses"]) > 0:
-                    address_dict = record["addresses"][0]
-                    location.update(
-                        {
-                            "country_code": address_dict["country"],
-                            "region": address_dict["state"],
-                        }
-                    )
+            addresses = record.get("addresses")
+            if addresses:
+                # sometimes it comes as a dict
+                if not isinstance(addresses, list):
+                    return({"map_error":"Adresses field is not formatted correctly, addresses format should be: [{'line1': 'xxxxx', 'city': 'xxxxx', 'state':'xxxxx', 'postal_code':'xxxxx'}]", "externalId": record.get("externalId")})
+                
+                address_dict = record["addresses"][0]
 
-                    address = {
-                        "addr1": address_dict.get("line1"),
-                        "city": address_dict.get("city"),
-                        "state": address_dict.get("state"),
-                        "zip": address_dict.get("postalCode", address_dict.get("postal_code")),
+                address = {
+                    "addr1": address_dict.get("line1"),
+                    "city": address_dict.get("city"),
+                    "state": address_dict.get("state"),
+                    "zip": address_dict.get("postalCode", address_dict.get("postal_code")),
+                }
+
+                if address_dict.get("country"):
+                    address["country"] = address_dict.get("country")
+                
+                if address_dict.get("line2"):
+                    address["addr2"] = address_dict.get("line2")
+
+                # mailchimp has a strict validation on adress types addr1, city, state and zip fields must be populated
+                required_fields = ["addr1", "city", "state", "zip"]
+                for key, value in address.items():
+                    if key in required_fields and not value:
+                        self.logger.info(f"Not sending address due one or more of these address fields is missing or empty line1, city, zip, postal_code for record with email {record['email']}")
+                        address = None
+
+                location.update(
+                    {
+                        "country_code": address_dict.get("country"),
+                        "region": address_dict.get("state"),
                     }
-
-                    if address_dict.get("country"):
-                        address["country"] = address_dict.get("country")
-                    
-                    if address_dict.get("line2"):
-                        address["addr2"] = address_dict.get("line2")
-
-                    # mailchimp has a strict validation on adress types addr1, city, state and zip fields must be populated
-                    required_fields = ["addr1", "city", "state", "zip"]
-                    for key, value in address.items():
-                        if key in required_fields and not value:
-                            raise Exception(f"Any of these fields is either missing or empty in address line1, city, zip, postal_code for record with email {record['email']}")
-                        
+                )        
                 
             subscribed_status = self.config.get("subscribe_status", "subscribed")
 
             # override status if it is found in the record
             if record.get("subscribe_status"):
                 subscribed_status = record.get("subscribe_status")
-
-            # validate if email has been provided
-            if not record["email"]:
-                raise Exception(f"Email was not provided and it's a required value")
 
             # Build member dictionary and adds merge_fields without content
             member_dict = {
@@ -143,8 +149,10 @@ class MailChimpV2Sink(HotglueBatchSink):
             merge_fields = {
                 "FNAME": first_name,
                 "LNAME": last_name,
-                "ADDRESS": address
             }
+            
+            if address:
+                merge_fields["ADDRESS"] = address
 
             # add phone number if exists
             if record.get("phone_numbers"):
@@ -194,7 +202,7 @@ class MailChimpV2Sink(HotglueBatchSink):
                     f"Failed to post because there was no list ID found for the list name {self.config.get('list_name')}!"
                 )
 
-    def handle_batch_response(self, response) -> dict:
+    def handle_batch_response(self, response, map_errors) -> dict:
         """
         This method should return a dict.
         It's recommended that you return a key named "state_updates".
@@ -216,5 +224,31 @@ class MailChimpV2Sink(HotglueBatchSink):
                 "error": error.get("error"),
                 "externalId": self.external_ids_dict.get(error.get("email_address"))
             })
+        
+        for map_error in map_errors:
+            state_updates.append({
+                "success": False,
+                "map_error": map_error.get("map_error"),
+                "externalId": map_error.get("externalId")
+            })
 
         return {"state_updates": state_updates}
+
+
+    def process_batch(self, context: dict) -> None:
+        if not self.latest_state:
+            self.init_state()
+
+        raw_records = context["records"]
+
+        records = list(map(lambda e: self.process_batch_record(e[1], e[0]), enumerate(raw_records)))
+
+        map_errors = [rec for rec in records if "map_error" in rec]
+        records = [rec for rec in records if "map_error" not in rec]
+
+        response = self.make_batch_request(records)
+
+        result = self.handle_batch_response(response, map_errors)
+
+        for state in result.get("state_updates", list()):
+            self.update_state(state)
