@@ -102,7 +102,7 @@ class MailChimpV2Sink(HotglueBatchSink):
             if addresses:
                 # sometimes it comes as a dict
                 if not isinstance(addresses, list):
-                    return({"map_error":"Adresses field is not formatted correctly, addresses format should be: [{'line1': 'xxxxx', 'city': 'xxxxx', 'state':'xxxxx', 'postal_code':'xxxxx'}]", "externalId": record.get("externalId")})
+                    return({"map_error":"Addresses field is not formatted correctly, addresses format should be: [{'line1': 'xxxxx', 'city': 'xxxxx', 'state':'xxxxx', 'postal_code':'xxxxx'}]", "externalId": record.get("externalId")})
                 
                 address_dict = record["addresses"][0]
 
@@ -123,7 +123,7 @@ class MailChimpV2Sink(HotglueBatchSink):
                 required_fields = ["addr1", "city", "state", "zip"]
                 for key, value in address.items():
                     if key in required_fields and not value:
-                        self.logger.info(f"Not sending address due one or more of these address fields is missing or empty line1, city, zip, postal_code for record with email {record['email']}")
+                        self.logger.info(f"Ignoring address due to empty or missing required fields: line1, city, zip, postal_code for record with email {record['email']}")
                         address = None
 
                 location.update(
