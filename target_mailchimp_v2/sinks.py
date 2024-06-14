@@ -73,6 +73,22 @@ class MailChimpV2Sink(HotglueBatchSink):
             self.logger.info(response)
         except ApiClientError as error:
             self.logger.exception("Error: {}".format(error.text))
+    
+    def clean_convert(self, input):
+        allowed_values = [0, "", False]
+        if isinstance(input, list):
+            return [self.clean_convert(i) for i in input]
+        elif isinstance(input, dict):
+            output = {}
+            for k, v in input.items():
+                v = self.clean_convert(v)
+                if isinstance(v, list):
+                    output[k] = [i for i in v if i or i in allowed_values]
+                elif v or v in allowed_values:
+                    output[k] = v
+            return output
+        elif input or input in allowed_values:
+            return input
 
     def process_batch_record(self, record: dict, index: int) -> dict:
         if self.stream_name.lower() in ["customers", "contacts", "customer", "contact"]:
@@ -130,6 +146,8 @@ class MailChimpV2Sink(HotglueBatchSink):
                     {
                         "country_code": address_dict.get("country"),
                         "region": address_dict.get("state"),
+                        "latitude": float(address_dict.get("latitude", 0)),
+                        "longitude": float(address_dict.get("longitude", 0)),
                     }
                 )        
                 
@@ -175,6 +193,8 @@ class MailChimpV2Sink(HotglueBatchSink):
             # add email and externalid to externalid dict for state
             self.external_ids_dict[record["email"]] = record.get("externalId", record["email"])
 
+            # clean null values
+            member_dict = self.clean_convert(member_dict)
             return member_dict
 
     def make_batch_request(self, records):
