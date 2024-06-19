@@ -236,8 +236,7 @@ class MailChimpV2Sink(HotglueBatchSink):
                         # add group name to lists_ids for payload
                         group_name_ids.append(self.groups_dict[group_title]["group_names"][group_name])
                     else:
-                        raise Exception(f"Group title {group_title} not found in this account.")
-                
+                        return({"map_error":f"Group title {group_title} not found in this account.", "externalId": record.get("externalId")})                
 
                 member_dict["interests"] = {group_name_id: True for group_name_id in group_name_ids}
 
