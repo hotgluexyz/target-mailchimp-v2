@@ -29,6 +29,8 @@ class MailChimpV2Sink(HotglueBatchSink):
     def unified_schema(self):
         return None
 
+    groups_dict = None
+
     def get_server(self):
         if self.server is None:
             self.server = self.get_server_meta_data()
@@ -192,6 +194,39 @@ class MailChimpV2Sink(HotglueBatchSink):
 
             # add email and externalid to externalid dict for state
             self.external_ids_dict[record["email"]] = record.get("externalId", record["email"])
+
+            # add groups 
+            lists = record.get("lists")
+            if record.get("lists"):
+                # get groups names and ids
+                if self.groups_dict is None and self.list_id:
+                    client = MailchimpMarketing.Client()
+                    server = self.get_server()
+                    client.set_config(
+                        {"access_token": self.config.get("access_token"), "server": server}
+                    )
+                    # get the group titles - interest categories
+                    group_titles = client.api_client.call_api(f"/lists/{self.list_id}/interest-categories", "GET")
+                    group_titles = group_titles["categories"]
+
+                    group_names = []
+                    # get all group names(interests) ids for each group title
+                    for group_title in group_titles:
+                        interests = client.api_client.call_api(f"/lists/{self.list_id}/interest-categories/{group_title['id']}/interests", "GET")
+                        group_names.extend(interests["interests"])
+                    
+                    self.groups_dict = {group_name["name"]: group_name["id"] for group_name in group_names}
+
+                # get each groupName in lists id
+                lists_ids = []
+                for list_name in lists:
+                    if self.groups_dict.get(list_name):
+                        lists_ids.append(self.groups_dict.get(list_name))
+                    else:
+                        self.logger.info(f"Group {list_name} not found in this account, skipping group for contacts.")
+                
+
+                member_dict["interests"] = {list_id: True for list_id in lists_ids}
 
             # clean null values
             member_dict = self.clean_convert(member_dict)
