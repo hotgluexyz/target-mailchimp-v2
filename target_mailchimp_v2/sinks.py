@@ -263,7 +263,7 @@ class MailChimpV2Sink(HotglueBatchSink):
 
                     return response
                 except ApiClientError as error:
-                    self.logger.exception("Error: {}".format(error.text))
+                    raise Exception("Error: None of the records went through due to error '{}', no state available.".format(error.text))
             else:
                 raise Exception(
                     f"Failed to post because there was no list ID found for the list name {self.config.get('list_name')}!"
