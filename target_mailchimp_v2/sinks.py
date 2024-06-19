@@ -198,35 +198,48 @@ class MailChimpV2Sink(HotglueBatchSink):
             # add groups 
             lists = record.get("lists")
             if record.get("lists"):
+                group_names = {}
+                # initialize server
+                client = MailchimpMarketing.Client()
+                server = self.get_server()
+                client.set_config(
+                    {"access_token": self.config.get("access_token"), "server": server}
+                )
                 # get groups names and ids
                 if self.groups_dict is None and self.list_id:
-                    client = MailchimpMarketing.Client()
-                    server = self.get_server()
-                    client.set_config(
-                        {"access_token": self.config.get("access_token"), "server": server}
-                    )
                     # get the group titles - interest categories
                     group_titles = client.api_client.call_api(f"/lists/{self.list_id}/interest-categories", "GET")
                     group_titles = group_titles["categories"]
-
-                    group_names = []
+                    group_names.update({g_title["title"]: {"id": g_title["id"], "group_names": {}} for g_title in group_titles})
                     # get all group names(interests) ids for each group title
                     for group_title in group_titles:
                         interests = client.api_client.call_api(f"/lists/{self.list_id}/interest-categories/{group_title['id']}/interests", "GET")
-                        group_names.extend(interests["interests"])
-                    
-                    self.groups_dict = {group_name["name"]: group_name["id"] for group_name in group_names}
+                        group_names[group_title["title"]]["group_names"] = {group_name["name"]: group_name["id"] for group_name in interests["interests"]}
+                
+                    self.groups_dict = group_names
 
                 # get each groupName in lists id
-                lists_ids = []
+                group_name_ids = []
                 for list_name in lists:
-                    if self.groups_dict.get(list_name):
-                        lists_ids.append(self.groups_dict.get(list_name))
+                    try:
+                        group_title, group_name = list_name.split("/")
+                    except:
+                        return({"map_error":f"{list_name} format is wrong, it should be groupTitle/groupName", "externalId": record.get("externalId")})
+                    
+                    # check if group title exists
+                    if self.groups_dict.get(group_title):
+                        # get group name id and add it to the payload
+                        if not self.groups_dict[group_title]["group_names"].get(group_name):
+                            body = {"name": group_name}
+                            new_group_name = client.api_client.call_api(f"/lists/{self.list_id}/interest-categories/{self.groups_dict[group_title]['id']}/interests", "POST", body=body)
+                            self.groups_dict[group_title]["group_names"].update({new_group_name["name"]: new_group_name["id"]})
+                        # add group name to lists_ids for payload
+                        group_name_ids.append(self.groups_dict[group_title]["group_names"][group_name])
                     else:
-                        self.logger.info(f"Group {list_name} not found in this account, skipping group for contacts.")
+                        raise Exception(f"Group title {group_title} not found in this account.")
                 
 
-                member_dict["interests"] = {list_id: True for list_id in lists_ids}
+                member_dict["interests"] = {group_name_id: True for group_name_id in group_name_ids}
 
             # clean null values
             member_dict = self.clean_convert(member_dict)
