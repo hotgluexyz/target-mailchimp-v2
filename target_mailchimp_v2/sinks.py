@@ -224,13 +224,14 @@ class MailChimpV2Sink(HotglueBatchSink):
                     try:
                         group_title, group_name = list_name.split("/")
                     except:
-                        return({"map_error":f"{list_name} format is wrong, it should be groupTitle/groupName", "externalId": record.get("externalId")})
+                        return({"map_error":f"Failed to post: List item '{list_name}' format is incorrect or incomplete, list item format should be 'groupTitle/groupName'", "externalId": record.get("externalId")})
                     
                     # check if group title exists
                     if self.groups_dict.get(group_title):
                         # get group name id and add it to the payload
                         if not self.groups_dict[group_title]["group_names"].get(group_name):
                             body = {"name": group_name}
+                            self.logger.info(f"Creating GroupName {group_name} inside category {group_title}")
                             new_group_name = client.api_client.call_api(f"/lists/{self.list_id}/interest-categories/{self.groups_dict[group_title]['id']}/interests", "POST", body=body)
                             self.groups_dict[group_title]["group_names"].update({new_group_name["name"]: new_group_name["id"]})
                         # add group name to lists_ids for payload
@@ -246,24 +247,27 @@ class MailChimpV2Sink(HotglueBatchSink):
 
     def make_batch_request(self, records):
         if self.stream_name.lower() in ["customers", "contacts", "customer", "contact"]:
-            if self.list_id is not None and len(records) > 0:
-                try:
-                    client = MailchimpMarketing.Client()
-                    client.set_config(
-                        {
-                            "access_token": self.config.get("access_token"),
-                            "server": self.get_server(),
-                        }
-                    )
+            if self.list_id is not None:
+                if records:
+                    try:
+                        client = MailchimpMarketing.Client()
+                        client.set_config(
+                            {
+                                "access_token": self.config.get("access_token"),
+                                "server": self.get_server(),
+                            }
+                        )
 
-                    response = client.lists.batch_list_members(
-                        self.list_id,
-                        {"members": records, "update_existing": True},
-                    )
+                        response = client.lists.batch_list_members(
+                            self.list_id,
+                            {"members": records, "update_existing": True},
+                        )
 
-                    return response
-                except ApiClientError as error:
-                    raise Exception("Error: None of the records went through due to error '{}', no state available.".format(error.text))
+                        return response
+                    except ApiClientError as error:
+                        raise Exception("Error: None of the records went through due to error '{}', no state available.".format(error.text))
+                else:
+                    return {}
             else:
                 raise Exception(
                     f"Failed to post because there was no list ID found for the list name {self.config.get('list_name')}!"
@@ -276,7 +280,7 @@ class MailChimpV2Sink(HotglueBatchSink):
         This key should be an array of all state updates
         """
         state_updates = []
-        members = response.get("new_members") + response.get("updated_members")
+        members = response.get("new_members", []) + response.get("updated_members", [])
 
         for member in members:
             state_updates.append({
@@ -285,7 +289,7 @@ class MailChimpV2Sink(HotglueBatchSink):
                 "externalId": self.external_ids_dict.get(member.get("email_address"))
             })
 
-        for error in response.get("errors"):
+        for error in response.get("errors", []):
             state_updates.append({
                 "success": False,
                 "error": error.get("error"),
