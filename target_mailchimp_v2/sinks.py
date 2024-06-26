@@ -8,7 +8,7 @@ from singer_sdk.sinks import BatchSink
 from target_hotglue.client import HotglueBatchSink
 
 class MailChimpV2Sink(HotglueBatchSink):
-    max_size = 10000  # Max records to write in one batch
+    max_size = 500  # Max records to write in one batch
     list_id = None
     server = None
     external_ids_dict = {}
