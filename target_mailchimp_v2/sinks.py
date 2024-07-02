@@ -11,6 +11,7 @@ class MailChimpV2Sink(HotglueBatchSink):
     max_size = 500  # Max records to write in one batch
     list_id = None
     server = None
+    custom_fields = []
     external_ids_dict = {}
 
     @property
@@ -180,6 +181,15 @@ class MailChimpV2Sink(HotglueBatchSink):
                 if phone_dict.get("number"):
                     merge_fields.update({"PHONE": phone_dict.get("number")})
 
+            #Check and populate custom fields as merge fields    
+            if "custom_fields" in record:
+                if isinstance(record['custom_fields'],list):
+                    for field in  record['custom_fields']:
+                        if "name" in field:
+                            merge_fields.update({ field['name']:field['value']})
+                            if field['name'] not in self.custom_fields:
+                                self.custom_fields.append(field['name']) 
+
             # Iterate through all of the possible merge fields, if one is None
             # then it is removed from the dictionary
             keys_to_remove = []
@@ -244,6 +254,18 @@ class MailChimpV2Sink(HotglueBatchSink):
             # clean null values
             member_dict = self.clean_convert(member_dict)
             return member_dict
+        
+    def verify_add_merge_field(self,client):
+        if self.custom_fields:
+            merge_fields = client.lists.get_list_merge_fields(self.list_id)
+            if merge_fields:
+                merge_fields_list = []
+                for merge_field in merge_fields['merge_fields']:
+                    merge_fields_list.append(merge_field['name'])
+            for custom_field in self.custom_fields:
+                if custom_field not in merge_fields_list:
+                    #Add merge field
+                    client.lists.add_list_merge_field(self.list_id,{"name":custom_field,"type":"text"})
 
     def make_batch_request(self, records):
         if self.stream_name.lower() in ["customers", "contacts", "customer", "contact"]:
