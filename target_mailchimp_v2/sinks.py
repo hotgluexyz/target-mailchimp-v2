@@ -8,10 +8,11 @@ from singer_sdk.sinks import BatchSink
 from target_hotglue.client import HotglueBatchSink
 
 class MailChimpV2Sink(HotglueBatchSink):
-    max_size = 10000  # Max records to write in one batch
+    max_size = 500  # Max records to write in one batch
     list_id = None
     server = None
     custom_fields = []
+    external_ids_dict = {}
 
     @property
     def name(self) -> str:
@@ -28,6 +29,8 @@ class MailChimpV2Sink(HotglueBatchSink):
     @property
     def unified_schema(self):
         return None
+
+    groups_dict = None
 
     def get_server(self):
         if self.server is None:
@@ -73,6 +76,22 @@ class MailChimpV2Sink(HotglueBatchSink):
             self.logger.info(response)
         except ApiClientError as error:
             self.logger.exception("Error: {}".format(error.text))
+    
+    def clean_convert(self, input):
+        allowed_values = [0, "", False]
+        if isinstance(input, list):
+            return [self.clean_convert(i) for i in input]
+        elif isinstance(input, dict):
+            output = {}
+            for k, v in input.items():
+                v = self.clean_convert(v)
+                if isinstance(v, list):
+                    output[k] = [i for i in v if i or i in allowed_values]
+                elif v or v in allowed_values:
+                    output[k] = v
+            return output
+        elif input or input in allowed_values:
+            return input
 
     def process_batch_record(self, record: dict, index: int) -> dict:
         if self.stream_name.lower() in ["customers", "contacts", "customer", "contact"]:
@@ -92,23 +111,49 @@ class MailChimpV2Sink(HotglueBatchSink):
                 "timezone": "",
                 "region": "",
             }
+
+            # validate if email has been provided, it's a required field
+            if not record.get("email"):
+                return({"map_error":"Email was not provided and it's a required value", "externalId": record.get("externalId")})
+            
             address = None
-            if "addresses" in record:
-                if len(record["addresses"]) > 0:
-                    address_dict = record["addresses"][0]
-                    location.update(
-                        {
-                            "country_code": address_dict["country"],
-                            "region": address_dict["state"],
-                        }
-                    )
-                    address = {
-                        "addr1": address_dict.get("line1"),
-                        "city": address_dict.get("city"),
-                        "state": address_dict.get("state"),
-                        "zip": address_dict.get("postalCode"),
-                        "country": address_dict.get("country")
+            addresses = record.get("addresses")
+            if addresses:
+                # sometimes it comes as a dict
+                if not isinstance(addresses, list):
+                    return({"map_error":"Addresses field is not formatted correctly, addresses format should be: [{'line1': 'xxxxx', 'city': 'xxxxx', 'state':'xxxxx', 'postal_code':'xxxxx'}]", "externalId": record.get("externalId")})
+                
+                address_dict = record["addresses"][0]
+
+                address = {
+                    "addr1": address_dict.get("line1"),
+                    "city": address_dict.get("city"),
+                    "state": address_dict.get("state"),
+                    "zip": address_dict.get("postalCode", address_dict.get("postal_code")),
+                }
+
+                if address_dict.get("country"):
+                    address["country"] = address_dict.get("country")
+                
+                if address_dict.get("line2"):
+                    address["addr2"] = address_dict.get("line2")
+
+                # mailchimp has a strict validation on adress types addr1, city, state and zip fields must be populated
+                required_fields = ["addr1", "city", "state", "zip"]
+                for key, value in address.items():
+                    if key in required_fields and not value:
+                        self.logger.info(f"Ignoring address due to empty or missing required fields: line1, city, zip, postal_code for record with email {record['email']}")
+                        address = None
+
+                location.update(
+                    {
+                        "country_code": address_dict.get("country"),
+                        "region": address_dict.get("state"),
+                        "latitude": float(address_dict.get("latitude", 0)),
+                        "longitude": float(address_dict.get("longitude", 0)),
                     }
+                )        
+                
             subscribed_status = self.config.get("subscribe_status", "subscribed")
 
             # override status if it is found in the record
@@ -125,8 +170,17 @@ class MailChimpV2Sink(HotglueBatchSink):
             merge_fields = {
                 "FNAME": first_name,
                 "LNAME": last_name,
-                "ADDRESS": address
             }
+            
+            if address:
+                merge_fields["ADDRESS"] = address
+
+            # add phone number if exists
+            if record.get("phone_numbers"):
+                phone_dict = record["phone_numbers"][0]
+                if phone_dict.get("number"):
+                    merge_fields.update({"PHONE": phone_dict.get("number")})
+
             #Check and populate custom fields as merge fields    
             if "custom_fields" in record:
                 if isinstance(record['custom_fields'],list):
@@ -135,6 +189,7 @@ class MailChimpV2Sink(HotglueBatchSink):
                             merge_fields.update({ field['name']:field['value']})
                             if field['name'] not in self.custom_fields:
                                 self.custom_fields.append(field['name']) 
+
             # Iterate through all of the possible merge fields, if one is None
             # then it is removed from the dictionary
             keys_to_remove = []
@@ -146,6 +201,58 @@ class MailChimpV2Sink(HotglueBatchSink):
                 merge_fields.pop(key)
 
             member_dict["merge_fields"] = merge_fields
+
+            # add email and externalid to externalid dict for state
+            self.external_ids_dict[record["email"]] = record.get("externalId", record["email"])
+
+            # add groups 
+            lists = record.get("lists")
+            if record.get("lists"):
+                group_names = {}
+                # initialize server
+                client = MailchimpMarketing.Client()
+                server = self.get_server()
+                client.set_config(
+                    {"access_token": self.config.get("access_token"), "server": server}
+                )
+                # get groups names and ids
+                if self.groups_dict is None and self.list_id:
+                    # get the group titles - interest categories
+                    group_titles = client.api_client.call_api(f"/lists/{self.list_id}/interest-categories", "GET")
+                    group_titles = group_titles["categories"]
+                    group_names.update({g_title["title"]: {"id": g_title["id"], "group_names": {}} for g_title in group_titles})
+                    # get all group names(interests) ids for each group title
+                    for group_title in group_titles:
+                        interests = client.api_client.call_api(f"/lists/{self.list_id}/interest-categories/{group_title['id']}/interests", "GET")
+                        group_names[group_title["title"]]["group_names"] = {group_name["name"]: group_name["id"] for group_name in interests["interests"]}
+                
+                    self.groups_dict = group_names
+
+                # get each groupName in lists id
+                group_name_ids = []
+                for list_name in lists:
+                    try:
+                        group_title, group_name = list_name.split("/")
+                    except:
+                        return({"map_error":f"Failed to post: List item '{list_name}' format is incorrect or incomplete, list item format should be 'groupTitle/groupName'", "externalId": record.get("externalId")})
+                    
+                    # check if group title exists
+                    if self.groups_dict.get(group_title):
+                        # get group name id and add it to the payload
+                        if not self.groups_dict[group_title]["group_names"].get(group_name):
+                            body = {"name": group_name}
+                            self.logger.info(f"Creating GroupName {group_name} inside category {group_title}")
+                            new_group_name = client.api_client.call_api(f"/lists/{self.list_id}/interest-categories/{self.groups_dict[group_title]['id']}/interests", "POST", body=body)
+                            self.groups_dict[group_title]["group_names"].update({new_group_name["name"]: new_group_name["id"]})
+                        # add group name to lists_ids for payload
+                        group_name_ids.append(self.groups_dict[group_title]["group_names"][group_name])
+                    else:
+                        return({"map_error":f"Group title {group_title} not found in this account.", "externalId": record.get("externalId")})                
+
+                member_dict["interests"] = {group_name_id: True for group_name_id in group_name_ids}
+
+            # clean null values
+            member_dict = self.clean_convert(member_dict)
             return member_dict
         
     def verify_add_merge_field(self,client):
@@ -162,51 +269,79 @@ class MailChimpV2Sink(HotglueBatchSink):
 
     def make_batch_request(self, records):
         if self.stream_name.lower() in ["customers", "contacts", "customer", "contact"]:
-            if self.list_id is not None and len(records) > 0:
-                try:
-                    client = MailchimpMarketing.Client()
-                    client.set_config(
-                        {
-                            "access_token": self.config.get("access_token"),
-                            "server": self.get_server(),
-                        }
-                    )
-                    #Check and add merge field to the list if required.
-                    res = self.verify_add_merge_field(client)
-                    response = client.lists.batch_list_members(
-                        self.list_id,
-                        {"members": records, "update_existing": True},
-                    )
+            if self.list_id is not None:
+                if records:
+                    try:
+                        client = MailchimpMarketing.Client()
+                        client.set_config(
+                            {
+                                "access_token": self.config.get("access_token"),
+                                "server": self.get_server(),
+                            }
+                        )
 
-                    return response
-                except ApiClientError as error:
-                    self.logger.exception("Error: {}".format(error.text))
+                        response = client.lists.batch_list_members(
+                            self.list_id,
+                            {"members": records, "update_existing": True},
+                        )
+
+                        return response
+                    except ApiClientError as error:
+                        raise Exception("Error: None of the records went through due to error '{}', no state available.".format(error.text))
+                else:
+                    return {}
             else:
                 raise Exception(
                     f"Failed to post because there was no list ID found for the list name {self.config.get('list_name')}!"
                 )
 
-    def handle_batch_response(self, response) -> dict:
+    def handle_batch_response(self, response, map_errors) -> dict:
         """
         This method should return a dict.
         It's recommended that you return a key named "state_updates".
         This key should be an array of all state updates
         """
         state_updates = []
-        members = response.get("new_members") + response.get("updated_members")
+        members = response.get("new_members", []) + response.get("updated_members", [])
 
         for member in members:
             state_updates.append({
                 "success": True,
                 "id": member["id"],
-                "externalId": member.get("email_address")
+                "externalId": self.external_ids_dict.get(member.get("email_address"))
             })
 
-        for error in response.get("errors"):
+        for error in response.get("errors", []):
             state_updates.append({
                 "success": False,
                 "error": error.get("error"),
-                "externalId": error.get("email_address")
+                "externalId": self.external_ids_dict.get(error.get("email_address"))
+            })
+        
+        for map_error in map_errors:
+            state_updates.append({
+                "success": False,
+                "map_error": map_error.get("map_error"),
+                "externalId": map_error.get("externalId")
             })
 
         return {"state_updates": state_updates}
+
+
+    def process_batch(self, context: dict) -> None:
+        if not self.latest_state:
+            self.init_state()
+
+        raw_records = context["records"]
+
+        records = list(map(lambda e: self.process_batch_record(e[1], e[0]), enumerate(raw_records)))
+
+        map_errors = [rec for rec in records if "map_error" in rec]
+        records = [rec for rec in records if "map_error" not in rec]
+
+        response = self.make_batch_request(records)
+
+        result = self.handle_batch_response(response, map_errors)
+
+        for state in result.get("state_updates", list()):
+            self.update_state(state)
