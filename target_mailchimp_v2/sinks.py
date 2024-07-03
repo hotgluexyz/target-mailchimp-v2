@@ -11,6 +11,7 @@ class MailChimpV2Sink(HotglueBatchSink):
     max_size = 500  # Max records to write in one batch
     list_id = None
     server = None
+    custom_fields = None
     external_ids_dict = {}
 
     @property
@@ -91,6 +92,34 @@ class MailChimpV2Sink(HotglueBatchSink):
             return output
         elif input or input in allowed_values:
             return input
+        
+    def handle_custom_fields(self, client, record_custom_fields, merge_fields):
+        #Check and populate custom fields as merge fields
+        if self.custom_fields is None:
+            _merge_fields = client.lists.get_list_merge_fields(self.list_id)
+            self.custom_fields = {field["name"]: field["tag"] for field in _merge_fields["merge_fields"]}
+
+        if not isinstance(record_custom_fields, list):
+            self.logger.info(f"Skipping custom fields, custom fields should be a list of dicts")
+        for field in record_custom_fields:
+            if not isinstance(field, dict):
+                self.logger.info(f"Custom field format is incorrect, skipping custom field {field}")
+                self.logger.info("Custom field should follow this format: {'name': 'field name', 'value': 'field value'}.")
+                continue
+            
+            field_name = field.get("name")
+            # Note: merge fields should be sent with the tag name, not the custom field name
+            # check if custom field name corresponds to a merge field tag
+            if field_name in self.custom_fields.values():
+                merge_fields[field_name] = field.get("value")
+            # check if custom field name corresponds to a merge field name and get the tag   
+            elif field_name in self.custom_fields:
+                merge_fields[self.custom_fields[field_name]] = field.get("value")
+            # if custom field doesn't exist create it
+            else:
+                merge_field_res = client.lists.add_list_merge_field(self.list_id,{"name":field_name,"type":"text"})
+                self.custom_fields.update({merge_field_res["name"]: merge_field_res["tag"]})
+        return merge_fields
 
     def process_batch_record(self, record: dict, index: int) -> dict:
         if self.stream_name.lower() in ["customers", "contacts", "customer", "contact"]:
@@ -180,6 +209,15 @@ class MailChimpV2Sink(HotglueBatchSink):
                 if phone_dict.get("number"):
                     merge_fields.update({"PHONE": phone_dict.get("number")})
 
+            # initialize server
+            client = MailchimpMarketing.Client()
+            server = self.get_server()
+            client.set_config(
+                {"access_token": self.config.get("access_token"), "server": server}
+            )
+            
+            merge_fields = self.handle_custom_fields(client, record.get("custom_fields", []), merge_fields)
+
             # Iterate through all of the possible merge fields, if one is None
             # then it is removed from the dictionary
             keys_to_remove = []
@@ -199,12 +237,6 @@ class MailChimpV2Sink(HotglueBatchSink):
             lists = record.get("lists")
             if record.get("lists"):
                 group_names = {}
-                # initialize server
-                client = MailchimpMarketing.Client()
-                server = self.get_server()
-                client.set_config(
-                    {"access_token": self.config.get("access_token"), "server": server}
-                )
                 # get groups names and ids
                 if self.groups_dict is None and self.list_id:
                     # get the group titles - interest categories
