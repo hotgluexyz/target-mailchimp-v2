@@ -275,6 +275,8 @@ class MailChimpV2Sink(HotglueBatchSink):
 
             # clean null values
             member_dict = self.clean_convert(member_dict)
+            if record.get("tags"):
+                member_dict['tags'] = record.get('tags', [])
             return member_dict
 
     def make_batch_request(self, records):
