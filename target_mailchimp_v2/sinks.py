@@ -142,14 +142,14 @@ class MailChimpV2Sink(HotglueBatchSink):
 
             # validate if email has been provided, it's a required field
             if not record.get("email"):
-                return({"map_error":"Email was not provided and it's a required value", "externalId": record.get("externalId")})
+                return({"error":"Email was not provided and it's a required value", "externalId": record.get("externalId")})
             
             address = None
             addresses = record.get("addresses")
             if addresses:
                 # sometimes it comes as a dict
                 if not isinstance(addresses, list):
-                    return({"map_error":"Addresses field is not formatted correctly, addresses format should be: [{'line1': 'xxxxx', 'city': 'xxxxx', 'state':'xxxxx', 'postal_code':'xxxxx'}]", "externalId": record.get("externalId")})
+                    return({"error":"Addresses field is not formatted correctly, addresses format should be: [{'line1': 'xxxxx', 'city': 'xxxxx', 'state':'xxxxx', 'postal_code':'xxxxx'}]", "externalId": record.get("externalId")})
                 
                 address_dict = record["addresses"][0]
 
@@ -256,7 +256,7 @@ class MailChimpV2Sink(HotglueBatchSink):
                     try:
                         group_title, group_name = list_name.split("/")
                     except:
-                        return({"map_error":f"Failed to post: List item '{list_name}' format is incorrect or incomplete, list item format should be 'groupTitle/groupName'", "externalId": record.get("externalId")})
+                        return({"error":f"Failed to post: List item '{list_name}' format is incorrect or incomplete, list item format should be 'groupTitle/groupName'", "externalId": record.get("externalId")})
                     
                     # check if group title exists
                     if self.groups_dict.get(group_title):
@@ -269,7 +269,7 @@ class MailChimpV2Sink(HotglueBatchSink):
                         # add group name to lists_ids for payload
                         group_name_ids.append(self.groups_dict[group_title]["group_names"][group_name])
                     else:
-                        return({"map_error":f"Group title {group_title} not found in this account.", "externalId": record.get("externalId")})                
+                        return({"error":f"Group title {group_title} not found in this account.", "externalId": record.get("externalId")})                
 
                 member_dict["interests"] = {group_name_id: True for group_name_id in group_name_ids}
 
@@ -333,7 +333,7 @@ class MailChimpV2Sink(HotglueBatchSink):
         for map_error in map_errors:
             state_updates.append({
                 "success": False,
-                "map_error": map_error.get("map_error"),
+                "error": map_error.get("error"),
                 "externalId": map_error.get("externalId")
             })
 
@@ -348,8 +348,8 @@ class MailChimpV2Sink(HotglueBatchSink):
 
         records = list(map(lambda e: self.process_batch_record(e[1], e[0]), enumerate(raw_records)))
 
-        map_errors = [rec for rec in records if "map_error" in rec]
-        records = [rec for rec in records if "map_error" not in rec]
+        map_errors = [rec for rec in records if "error" in rec]
+        records = [rec for rec in records if "error" not in rec]
 
         response = self.make_batch_request(records)
 
