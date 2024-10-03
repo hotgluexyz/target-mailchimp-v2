@@ -10,7 +10,7 @@ from target_hotglue.client import HotglueBatchSink, HotglueSink, HotglueBaseSink
 
 class BaseSink(HotglueBaseSink):
     server = None
-    contact_names = ["customers", "contacts", "customer", "contact"]
+    contact_names = ["customers", "contacts", "customer", "contact", "list_members"]
 
     @property
     def name(self) -> str:
