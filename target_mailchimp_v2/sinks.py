@@ -3,34 +3,33 @@
 
 import mailchimp_marketing as MailchimpMarketing
 import requests
-from mailchimp_marketing.api_client import ApiClientError
+from mailchimp_marketing.api_client import ApiClientError, ApiClient
 from singer_sdk.sinks import BatchSink
-from target_hotglue.client import HotglueBatchSink
+from target_hotglue.client import HotglueBatchSink, HotglueSink, HotglueBaseSink
 
-class MailChimpV2Sink(HotglueBatchSink):
-    max_size = 500  # Max records to write in one batch
-    list_id = None
+
+class BaseSink(HotglueBaseSink):
     server = None
-    custom_fields = None
-    external_ids_dict = {}
+    contact_names = ["customers", "contacts", "customer", "contact", "list_members"]
 
     @property
     def name(self) -> str:
         return self.stream_name
 
     @property
-    def endpoint(self) -> str:
-        raise ""
-
-    @property
     def base_url(self) -> str:
         return ""
 
-    @property
-    def unified_schema(self):
-        return None
+    def get_server_meta_data(self):
+        header = {"Authorization": f"OAuth {self.config.get('access_token')}"}
+        metadata = requests.get(
+            "https://login.mailchimp.com/oauth2/metadata", headers=header
+        ).json()
 
-    groups_dict = None
+        if "error" in metadata:
+            raise Exception(metadata["error"])
+
+        return metadata["dc"]
 
     def get_server(self):
         if self.server is None:
@@ -38,42 +37,50 @@ class MailChimpV2Sink(HotglueBatchSink):
 
         return self.server
 
+    def get_list_id(self):
+        client = MailchimpMarketing.Client()
+        server = self.get_server()
+        client.set_config(
+            {"access_token": self.config.get("access_token"), "server": server}
+        )
+        response = client.lists.get_all_lists()
+        self.logger.info(response)
+
+        config_name = self.config.get("list_name")
+        if "lists" in response:
+            for row in response["lists"]:
+                # Handle case where they don't set a list_name in config
+                if not config_name:
+                    return row["id"]
+
+                # NOTE: Making case insensitive to avoid issues
+                if row["name"].lower() == config_name.lower():
+                    return row["id"]
+
+
+class MailChimpV2Sink(BaseSink, HotglueBatchSink):
+    max_size = 500  # Max records to write in one batch
+    list_id = None
+    server = None
+    custom_fields = None
+    external_ids_dict = {}
+
+    @property
+    def endpoint(self) -> str:
+        raise ""
+
+    @property
+    def unified_schema(self):
+        return None
+
+    groups_dict = None
+
     def preprocess_record(self, record: dict, context: dict) -> dict:
         return record
 
-    def get_server_meta_data(self):
-        header = {"Authorization": f"OAuth {self.config.get('access_token')}"}
-        metadata = requests.get(
-            "https://login.mailchimp.com/oauth2/metadata", headers=header
-        ).json()
-        
-        if "error" in metadata:
-            raise Exception(metadata["error"])
-        
-        return metadata["dc"]
-
     def start_batch(self, context: dict) -> None:
         try:
-            client = MailchimpMarketing.Client()
-            server = self.get_server()
-            client.set_config(
-                {"access_token": self.config.get("access_token"), "server": server}
-            )
-
-            response = client.lists.get_all_lists()
-            config_name = self.config.get("list_name")
-            if "lists" in response:
-                for row in response["lists"]:
-                    # Handle case where they don't set a list_name in config
-                    if not config_name:
-                        self.list_id = row["id"]
-                        break
-
-                    # NOTE: Making case insensitive to avoid issues
-                    if row["name"].lower() == config_name.lower():
-                        self.list_id = row["id"]
-
-            self.logger.info(response)
+            self.list_id = self.get_list_id()
         except ApiClientError as error:
             self.logger.exception("Error: {}".format(error.text))
     
@@ -122,7 +129,7 @@ class MailChimpV2Sink(HotglueBatchSink):
         return merge_fields
 
     def process_batch_record(self, record: dict, index: int) -> dict:
-        if self.stream_name.lower() in ["customers", "contacts", "customer", "contact"]:
+        if self.stream_name.lower() in self.contact_names:
             if record.get("name"):
                 first_name, *last_name = record["name"].split()
                 last_name = " ".join(last_name)
@@ -280,7 +287,7 @@ class MailChimpV2Sink(HotglueBatchSink):
             return member_dict
 
     def make_batch_request(self, records):
-        if self.stream_name.lower() in ["customers", "contacts", "customer", "contact"]:
+        if self.stream_name.lower() in self.contact_names:
             if self.list_id is not None:
                 if records:
                     try:
@@ -357,3 +364,69 @@ class MailChimpV2Sink(HotglueBatchSink):
 
         for state in result.get("state_updates", list()):
             self.update_state(state)
+
+
+class FallbackSink(BaseSink, HotglueSink):
+    """Precoro target sink class."""
+
+    @property
+    def base_url(self) -> str:
+        return ""
+
+    @property
+    def endpoint(self) -> str:
+        return f"/{self.stream_name}"
+
+    def preprocess_record(self, record: dict, context: dict) -> None:
+        """Process the record."""
+        if self.stream_name.lower() in self.contact_names:
+            if not record.get("status"):
+                self.logger.info(
+                    f"Status not found for record {record}, adding status_if_new as subscribed by default"
+                )
+                record["status_if_new"] = "subscribed"
+        return record
+
+    def upsert_record(self, record: dict, context: dict):
+        state_updates = dict()
+        method = "POST"
+        endpoint = self.endpoint
+        if record:
+            # custom logic for contacts
+            if self.stream_name.lower() in self.contact_names:
+                # add email to the endpoint to use create or update endpoint
+                email = record.get("email_address")
+                if not email:
+                    raise Exception(
+                        f"No email found for record {record}, email is a required field."
+                    )
+                # get list id
+                list_id = self.get_list_id()
+                if not list_id:
+                    raise Exception(
+                        f"No list id found to send record with email {email}"
+                    )
+                # using create or update endpoint for contacts
+                method = "PUT"
+                endpoint = f"/lists/{list_id}/members/{email}"
+
+            # send data
+            id = record.pop("id", None)
+            if id:
+                id = int(id)
+                method = "PUT"
+                endpoint = f"{endpoint}/{id}"
+
+            # send data
+            client = MailchimpMarketing.ApiClient()
+            client.set_config(
+                {
+                    "access_token": self.config.get("access_token"),
+                    "server": self.get_server(),
+                }
+            )
+            response = client.call_api(
+                resource_path=endpoint, method=method, body=record
+            )
+            id = response["id"]
+            return id, True, state_updates
