@@ -441,7 +441,8 @@ class FallbackSink(BaseSink, HotglueSink):
             id = response["id"] if "id" in response else id if id else ""
             return id, True, state_updates
         except Exception as e:
-            return "", False, state_updates
+            self.logger.exception(f"Error when upserting record {record} on endpoint {endpoint}: {e}")
+            raise e
 
     def get_merge_fields(self, record: dict, list_id: str):
         merge_fields = self.get_client().lists.get_list_merge_fields(list_id)
