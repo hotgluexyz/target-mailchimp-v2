@@ -8,7 +8,7 @@ import copy
 from singer_sdk.sinks import BatchSink
 from singer_sdk.helpers._compat import final
 
-from target_mailchimp_v2.sinks import MailChimpV2Sink, FallbackSink
+from target_mailchimp_v2.sinks import BaseSink, MailChimpV2Sink, FallbackSink
 
 
 class TargetMailChimpV2(TargetHotglue):
@@ -27,12 +27,7 @@ class TargetMailChimpV2(TargetHotglue):
 
     def get_sink_class(self, stream_name: str):
         """Get sink for a stream."""
-        if stream_name.lower() in [
-            "customers",
-            "contacts",
-            "customer",
-            "contact",
-        ] and not self.config.get("use_fallback_sink"):
+        if stream_name.lower() in BaseSink.contact_names and not self.config.get("use_fallback_sink"):
             return MailChimpV2Sink
         return FallbackSink
 

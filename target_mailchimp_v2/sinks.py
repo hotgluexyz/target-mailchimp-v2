@@ -1,6 +1,9 @@
 """MailChimp-V2 target sink class, which handles writing streams."""
 
 
+import datetime
+import hashlib
+import json
 import mailchimp_marketing as MailchimpMarketing
 import requests
 from mailchimp_marketing.api_client import ApiClientError, ApiClient
@@ -38,11 +41,7 @@ class BaseSink(HotglueBaseSink):
         return self.server
 
     def get_list_id(self):
-        client = MailchimpMarketing.Client()
-        server = self.get_server()
-        client.set_config(
-            {"access_token": self.config.get("access_token"), "server": server}
-        )
+        client = self.get_client()
         response = client.lists.get_all_lists()
         self.logger.info(response)
 
@@ -56,7 +55,45 @@ class BaseSink(HotglueBaseSink):
                 # NOTE: Making case insensitive to avoid issues
                 if row["name"].lower() == config_name.lower():
                     return row["id"]
+                
+    def clean_convert(self, input):
+        allowed_values = [0, "", False]
+        if isinstance(input, list):
+            return [self.clean_convert(i) for i in input]
+        elif isinstance(input, dict):
+            output = {}
+            for k, v in input.items():
+                v = self.clean_convert(v)
+                if isinstance(v, list):
+                    output[k] = [i for i in v if i or i in allowed_values]
+                elif v or v in allowed_values:
+                    output[k] = v
+            return output
+        elif input or input in allowed_values:
+            if isinstance(input, (datetime.date, datetime.datetime)):
+                return input.isoformat()
+            return input
 
+    def get_client(self) -> MailchimpMarketing.Client:
+        if not hasattr(self, '_client') or self._client is None:
+            self._client = MailchimpMarketing.Client()
+            self._client.set_config(
+                {
+                    "access_token": self.config.get("access_token"),
+                    "server": self.get_server(),
+                }
+            )
+        return self._client
+    
+    def get_client_API(self) -> MailchimpMarketing.ApiClient:
+        client = MailchimpMarketing.ApiClient()
+        client.set_config(
+            {
+                "access_token": self.config.get("access_token"),
+                "server": self.get_server(),
+            }
+        )
+        return client
 
 class MailChimpV2Sink(BaseSink, HotglueBatchSink):
     max_size = 500  # Max records to write in one batch
@@ -83,24 +120,8 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
             self.list_id = self.get_list_id()
         except ApiClientError as error:
             self.logger.exception("Error: {}".format(error.text))
-    
-    def clean_convert(self, input):
-        allowed_values = [0, "", False]
-        if isinstance(input, list):
-            return [self.clean_convert(i) for i in input]
-        elif isinstance(input, dict):
-            output = {}
-            for k, v in input.items():
-                v = self.clean_convert(v)
-                if isinstance(v, list):
-                    output[k] = [i for i in v if i or i in allowed_values]
-                elif v or v in allowed_values:
-                    output[k] = v
-            return output
-        elif input or input in allowed_values:
-            return input
         
-    def handle_custom_fields(self, client, record_custom_fields, merge_fields):
+    def handle_custom_fields(self, client: MailchimpMarketing.Client, record_custom_fields, merge_fields):
         #Check and populate custom fields as merge fields
         if self.custom_fields is None:
             _merge_fields = client.lists.get_list_merge_fields(self.list_id)
@@ -148,7 +169,8 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
             }
 
             # validate if email has been provided, it's a required field
-            if not record.get("email"):
+            email_key = "email" if "email" in record else "email_address"
+            if not record.get(email_key):
                 return({"error":"Email was not provided and it's a required value", "externalId": record.get("externalId")})
             
             address = None
@@ -197,7 +219,7 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
 
             # Build member dictionary and adds merge_fields without content
             member_dict = {
-                "email_address": record["email"],
+                "email_address": record[email_key],
                 "status": subscribed_status,
                 "merge_fields": {},
                 "location": location,
@@ -217,11 +239,7 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
                     merge_fields.update({"PHONE": phone_dict.get("number")})
 
             # initialize server
-            client = MailchimpMarketing.Client()
-            server = self.get_server()
-            client.set_config(
-                {"access_token": self.config.get("access_token"), "server": server}
-            )
+            client = self.get_client()
             
             merge_fields = self.handle_custom_fields(client, record.get("custom_fields", []), merge_fields)
 
@@ -238,7 +256,7 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
             member_dict["merge_fields"] = merge_fields
 
             # add email and externalid to externalid dict for state
-            self.external_ids_dict[record["email"]] = record.get("externalId", record["email"])
+            self.external_ids_dict[record[email_key]] = record.get("externalId", record[email_key])
 
             # add groups 
             lists = record.get("lists")
@@ -291,13 +309,7 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
             if self.list_id is not None:
                 if records:
                     try:
-                        client = MailchimpMarketing.Client()
-                        client.set_config(
-                            {
-                                "access_token": self.config.get("access_token"),
-                                "server": self.get_server(),
-                            }
-                        )
+                        client = self.get_client()
 
                         response = client.lists.batch_list_members(
                             self.list_id,
@@ -351,7 +363,9 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
         if not self.latest_state:
             self.init_state()
 
-        raw_records = context["records"]
+        raw_records = context.get("records", [])
+        if not raw_records:
+            return
 
         records = list(map(lambda e: self.process_batch_record(e[1], e[0]), enumerate(raw_records)))
 
@@ -389,44 +403,53 @@ class FallbackSink(BaseSink, HotglueSink):
 
     def upsert_record(self, record: dict, context: dict):
         state_updates = dict()
+        if not record:
+            return "", False, state_updates
+        
         method = "POST"
         endpoint = self.endpoint
-        if record:
-            # custom logic for contacts
-            if self.stream_name.lower() in self.contact_names:
-                # add email to the endpoint to use create or update endpoint
-                email = record.get("email_address")
-                if not email:
-                    raise Exception(
-                        f"No email found for record {record}, email is a required field."
-                    )
-                # get list id
-                list_id = self.get_list_id()
-                if not list_id:
-                    raise Exception(
-                        f"No list id found to send record with email {email}"
-                    )
-                # using create or update endpoint for contacts
-                method = "PUT"
-                endpoint = f"/lists/{list_id}/members/{email}"
+        client_api = self.get_client_API()
+        client = self.get_client()
+        id = record.pop("id", None)
+        
+        # custom logic for contacts
+        if self.stream_name.lower() in self.contact_names:
+            # add email to the endpoint to use create or update endpoint
+            email = record.get("email_address")
+            if not email:
+                raise Exception(
+                    f"No email found for record {record}, email is a required field."
+                )
+            # get list id
+            list_id = self.get_list_id()
+            if not list_id:
+                raise Exception(
+                    f"No list id found to send record with email {email} for list {self.config.get('list_name')}"
+                )
+            # using create or update endpoint for contacts
+            method = "PUT"
+            endpoint = f"/lists/{list_id}/members/{email}"
+            self.get_merge_fields(record, list_id)
+        elif id:
+            endpoint = f"{endpoint}/{id}"
 
-            # send data
-            id = record.pop("id", None)
-            if id:
-                id = int(id)
-                method = "PUT"
-                endpoint = f"{endpoint}/{id}"
-
-            # send data
-            client = MailchimpMarketing.ApiClient()
-            client.set_config(
-                {
-                    "access_token": self.config.get("access_token"),
-                    "server": self.get_server(),
-                }
+        json_serializable_record = self.clean_convert(record)
+        try:
+            response = client_api.call_api(
+                resource_path=endpoint, method=method, body=json_serializable_record
             )
-            response = client.call_api(
-                resource_path=endpoint, method=method, body=record
-            )
-            id = response["id"]
+            id = response["id"] if "id" in response else id if id else ""
             return id, True, state_updates
+        except Exception as e:
+            return "", False, state_updates
+
+    def get_merge_fields(self, record: dict, list_id: str):
+        merge_fields = self.get_client().lists.get_list_merge_fields(list_id)
+        record["merge_fields"] = {}
+        for merge_field in merge_fields["merge_fields"]:
+            if "merge_fields." + merge_field["tag"] in record:
+                record["merge_fields"][merge_field["tag"]] = json.loads(record["merge_fields." + merge_field["tag"]])
+        merge_fields_to_remove = [field for field in record if field.startswith("merge_fields.")]
+        for field in merge_fields_to_remove:
+            record.pop(field)
+        
