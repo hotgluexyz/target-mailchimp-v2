@@ -13,7 +13,7 @@ from target_hotglue.client import HotglueBatchSink, HotglueSink, HotglueBaseSink
 
 class BaseSink(HotglueBaseSink):
     server = None
-    contact_names = ["customers", "contacts", "customer", "contact", "list_members"]
+    contact_names = ["customers", "contacts", "customer", "contact"]
 
     @property
     def name(self) -> str:
@@ -448,8 +448,14 @@ class FallbackSink(BaseSink, HotglueSink):
         merge_fields = self.get_client().lists.get_list_merge_fields(list_id)
         record["merge_fields"] = {}
         for merge_field in merge_fields["merge_fields"]:
-            if "merge_fields." + merge_field["tag"] in record:
-                record["merge_fields"][merge_field["tag"]] = json.loads(record["merge_fields." + merge_field["tag"]])
+            merge_field_tag = "merge_fields." + merge_field["tag"]
+            for field in record:
+                if merge_field_tag.lower() in field.lower():
+                    try:
+                        record["merge_fields"][merge_field["tag"]] = json.loads(record[field])
+                    except:
+                        record["merge_fields"][merge_field["tag"]] = record[field]
+                    continue
         merge_fields_to_remove = [field for field in record if field.startswith("merge_fields.")]
         for field in merge_fields_to_remove:
             record.pop(field)
