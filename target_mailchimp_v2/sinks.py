@@ -377,6 +377,25 @@ class FallbackSink(BaseSink, HotglueSink):
     def endpoint(self) -> str:
         return f"/{self.stream_name}"
 
+    def get_matching_object(self, id):
+        if not id:
+            return None
+        
+        client = MailchimpMarketing.Client()
+        client.set_config(
+            {
+                "access_token": self.config.get("access_token"),
+                "server": self.get_server(),
+            }
+        )
+
+        try:
+            url = f"/{self.stream_name}/{id}"
+            return client.api_client.call_api(url, "GET")
+        except ApiClientError as error:
+            self.logger.exception("Error: {}".format(error.text))
+            return None
+
     def preprocess_record(self, record: dict, context: dict) -> None:
         """Process the record."""
         if self.stream_name.lower() in self.contact_names:
@@ -385,6 +404,16 @@ class FallbackSink(BaseSink, HotglueSink):
                     f"Status not found for record {record}, adding status_if_new as subscribed by default"
                 )
                 record["status_if_new"] = "subscribed"
+        
+        if self.config.get("only_upsert_empty_fields", False):
+            matching_object = self.get_matching_object(record.get("id"))
+            if matching_object:
+                for key, value in record.items():
+                    existing_value = matching_object.get(key)
+                    if existing_value is None:
+                        matching_object[key] = value
+                record = matching_object
+
         return record
 
     def upsert_record(self, record: dict, context: dict):
