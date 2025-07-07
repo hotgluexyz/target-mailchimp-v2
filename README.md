@@ -16,7 +16,20 @@ pipx install target-mailchimp-v2
 
 ### Accepted Config Options
 
-- [ ] `Developer TODO:` Provide a list of config options accepted by the target.
+#### `only_upsert_empty_fields` (boolean, default: `false`)
+
+When set to `true`, the target will merge incoming records with existing MailChimp members, but only update fields that are empty or missing in the existing member. This prevents overwriting existing data with new values while still allowing you to fill in missing information.
+
+- `false` (default): Overwrites existing member data with new values
+- `true`: Only updates empty/missing fields in existing members, preserving existing data
+
+Example configuration:
+
+```json
+{
+  "only_upsert_empty_fields": true
+}
+```
 
 A full list of supported settings and capabilities for this
 target is available by running:
@@ -62,7 +75,7 @@ poetry install
 ### Create and Run Tests
 
 Create tests within the `target_mailchimp_v2/tests` subfolder and
-  then run:
+then run:
 
 ```bash
 poetry run pytest
