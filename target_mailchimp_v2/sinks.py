@@ -370,6 +370,12 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
         for member_record in member_records:
             existing_member = self.fetch_existing_member(member_record.get("email_address"), list_id)
             if existing_member:
+                # the api returns tags as a list of dicts, we need to convert it to a list of strings
+                if existing_member.get("tags"):
+                    existing_member["tags"] = [
+                        tag["name"] for tag in existing_member["tags"] 
+                        if isinstance(tag, dict) and tag.get("name")
+                    ]
                 merged_record = self.merge_filling_empty_fields(existing_member, member_record)
                 merged_records.append(merged_record)
             else:
