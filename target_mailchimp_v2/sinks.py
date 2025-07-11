@@ -1,6 +1,5 @@
 """MailChimp-V2 target sink class, which handles writing streams."""
 
-
 import mailchimp_marketing as MailchimpMarketing
 import requests
 from mailchimp_marketing.api_client import ApiClientError, ApiClient
@@ -286,6 +285,103 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
                 member_dict['tags'] = record.get('tags', [])
             return member_dict
 
+
+    def is_empty_value(self, value):
+        """
+        Determine if a value should be considered "empty" for upsert purposes.
+        """
+        if value is None:
+            return True
+        if isinstance(value, str) and value.strip() == "":
+            return True
+        if isinstance(value, (list, dict)) and len(value) == 0:
+            return True
+
+        return False
+
+    def merge_filling_empty_fields(self, existing_member, incoming_member):
+        """
+        Recursively merge incoming_member into existing_member, but only update fields
+        that are empty in the existing member.
+        
+        Args:
+            existing_member: The existing member data from the API
+            incoming_member: The new member data with potential updates
+            
+        Returns:
+            The merged member data
+        """
+        if not isinstance(existing_member, dict) or not isinstance(incoming_member, dict):
+            return incoming_member if self.is_empty_value(existing_member) else existing_member
+        
+        merged_member = existing_member.copy()
+        
+        for key, new_value in incoming_member.items():
+            if key not in merged_member:
+                merged_member[key] = new_value
+            else:
+                existing_value = merged_member[key]
+                
+                if isinstance(existing_value, dict) and isinstance(new_value, dict):
+                    merged_member[key] = self.merge_filling_empty_fields(existing_value, new_value)
+                elif isinstance(existing_value, list) and isinstance(new_value, list):
+                    if self.is_empty_value(existing_value):
+                        merged_member[key] = new_value
+                else:
+                    if self.is_empty_value(existing_value):
+                        merged_member[key] = new_value
+        
+        return merged_member
+
+
+    def fetch_existing_member(self, email_address, list_id):
+        if not email_address or not list_id:
+            return None
+        
+        client = MailchimpMarketing.ApiClient()
+        client.set_config(
+            {
+                "access_token": self.config.get("access_token"),
+                "server": self.get_server(),
+            }
+        )
+
+
+        try:
+            method = "GET"
+            endpoint = f"/lists/{list_id}/members/{email_address}"
+            existing_member = client.call_api(
+                resource_path=endpoint, method=method
+            )
+            
+            return existing_member
+            
+        except ApiClientError as api_error:
+            if "404" in str(api_error.status_code):
+                self.logger.info(f"Member with email {email_address} not found, using record as is")
+            else:
+                self.logger.info(f"Error fetching member {email_address}: {api_error.text}")
+        
+        return None
+
+    def merge_with_existing_members(self, member_records):
+        merged_records = []
+        list_id = self.get_list_id()
+        for member_record in member_records:
+            existing_member = self.fetch_existing_member(member_record.get("email_address"), list_id)
+            if existing_member:
+                # the api returns tags as a list of dicts, we need to convert it to a list of strings
+                if existing_member.get("tags"):
+                    existing_member["tags"] = [
+                        tag["name"] for tag in existing_member["tags"] 
+                        if isinstance(tag, dict) and tag.get("name")
+                    ]
+                merged_record = self.merge_filling_empty_fields(existing_member, member_record)
+            merged_records.append(merged_record)
+
+        return merged_records
+
+
     def make_batch_request(self, records):
         if self.stream_name.lower() in self.contact_names:
             if self.list_id is not None:
@@ -357,7 +453,9 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
 
         map_errors = [rec for rec in records if "error" in rec]
         records = [rec for rec in records if "error" not in rec]
-
+        if self.config.get("only_upsert_empty_fields", False):
+            records = self.merge_with_existing_members(records)
+        
         response = self.make_batch_request(records)
 
         result = self.handle_batch_response(response, map_errors)
