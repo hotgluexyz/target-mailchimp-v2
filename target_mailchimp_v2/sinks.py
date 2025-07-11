@@ -377,9 +377,7 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
                         if isinstance(tag, dict) and tag.get("name")
                     ]
                 merged_record = self.merge_filling_empty_fields(existing_member, member_record)
-                merged_records.append(merged_record)
-            else:
-                merged_records.append(member_record)
+            merged_records.append(merged_record)
 
         return merged_records
 
