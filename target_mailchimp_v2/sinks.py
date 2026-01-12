@@ -21,7 +21,18 @@ class BaseSink(HotglueBaseSink):
         return ""
 
     def get_server_meta_data(self):
-        header = {"Authorization": f"OAuth {self.config.get('access_token')}"}
+        access_token = self.config.get('access_token')
+        
+        # Check if this is an API key (format: key-datacenter)
+        # API keys contain a hyphen followed by the datacenter (e.g., "abc123-us22")
+        if access_token and '-' in access_token:
+            # Extract datacenter from API key
+            parts = access_token.rsplit('-', 1)
+            if len(parts) == 2 and parts[1]:
+                return parts[1]
+        
+        # Otherwise, try OAuth metadata endpoint
+        header = {"Authorization": f"OAuth {access_token}"}
         metadata = requests.get(
             "https://login.mailchimp.com/oauth2/metadata", headers=header
         ).json()
@@ -369,6 +380,8 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
 class FallbackSink(BaseSink, HotglueSink):
     """Precoro target sink class."""
 
+    custom_fields = None
+
     @property
     def base_url(self) -> str:
         return ""
@@ -387,11 +400,35 @@ class FallbackSink(BaseSink, HotglueSink):
                 record["status_if_new"] = "subscribed"
         return record
 
+    def handle_custom_fields(self, client, record, list_id):
+        #Check and populate custom fields as merge fields
+        if self.custom_fields is None:
+            _merge_fields = client.lists.get_list_merge_fields(list_id)
+            self.custom_fields = {field["name"]: field["tag"] for field in _merge_fields["merge_fields"]}
+
+        record_copy = record.copy()
+        merge_fields = {}
+        for field, value in record.items():
+            if field in self.custom_fields.values():
+                merge_fields[field] = value
+                record_copy.pop(field)
+        
+        record_copy["merge_fields"] = merge_fields
+        return record_copy
+
+
     def upsert_record(self, record: dict, context: dict):
         state_updates = dict()
         method = "POST"
         endpoint = self.endpoint
         if record:
+            # send data
+            # initialize server
+            client = MailchimpMarketing.Client()
+            server = self.get_server()
+            client.set_config(
+                {"access_token": self.config.get("access_token"), "server": server}
+            )
             # custom logic for contacts
             if self.stream_name.lower() in self.contact_names:
                 # add email to the endpoint to use create or update endpoint
@@ -410,10 +447,12 @@ class FallbackSink(BaseSink, HotglueSink):
                 method = "PUT"
                 endpoint = f"/lists/{list_id}/members/{email}"
 
+                # handle custom fields
+                record = self.handle_custom_fields(client, record, list_id)
+
             # send data
             id = record.pop("id", None)
             if id:
-                id = int(id)
                 method = "PUT"
                 endpoint = f"{endpoint}/{id}"
 
