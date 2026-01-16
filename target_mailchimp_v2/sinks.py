@@ -302,6 +302,9 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
             if not record.get("email_address"):
                 return({"error":"Email was not provided and it's a required value", "externalId": record.get("externalId")})
             
+            if not record.get("status"):
+                record["status_if_new"] = "subscribed"
+            
             # get external id from record
             self.external_ids_dict[record["email_address"]] = record.get("externalId", record["email_address"])
             return record
@@ -353,7 +356,7 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
         for error in response.get("errors", []):
             state_updates.append({
                 "success": False,
-                "error": error.get("error"),
+                "error": f"error: {error.get('error')}, field: {error.get('field')}, field_message: {error.get('value')}",
                 "externalId": self.external_ids_dict.get(error.get("email_address"))
             })
         
