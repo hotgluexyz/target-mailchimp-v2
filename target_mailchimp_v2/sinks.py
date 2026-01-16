@@ -6,6 +6,7 @@ import requests
 from mailchimp_marketing.api_client import ApiClientError, ApiClient
 from singer_sdk.sinks import BatchSink
 from target_hotglue.client import HotglueBatchSink, HotglueSink, HotglueBaseSink
+from mailchimp_transactional.api_client import ApiClientError
 
 
 class BaseSink(HotglueBaseSink):
@@ -140,7 +141,7 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
         return merge_fields
 
     def process_batch_record(self, record: dict, index: int) -> dict:
-        if self.stream_name.lower() in self.contact_names:
+        if self.stream_name.lower() in self.contact_names and self.config.get("process_batch_contacts", True):
             if record.get("name"):
                 first_name, *last_name = record["name"].split()
                 last_name = " ".join(last_name)
@@ -296,6 +297,15 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
             if record.get("tags"):
                 member_dict['tags'] = record.get('tags', [])
             return member_dict
+        
+        else:
+            # validate if email has been provided, it's a required field
+            if not record.get("email_address"):
+                return({"error":"Email was not provided and it's a required value", "externalId": record.get("externalId")})
+            
+            # get external id from record
+            self.external_ids_dict[record["email_address"]] = record.get("externalId", record["email_address"])
+            return record
 
     def make_batch_request(self, records):
         if self.stream_name.lower() in self.contact_names:
@@ -400,23 +410,6 @@ class FallbackSink(BaseSink, HotglueSink):
                 record["status_if_new"] = "subscribed"
         return record
 
-    def handle_custom_fields(self, client, record, list_id):
-        #Check and populate custom fields as merge fields
-        if self.custom_fields is None:
-            _merge_fields = client.lists.get_list_merge_fields(list_id)
-            self.custom_fields = {field["name"]: field["tag"] for field in _merge_fields["merge_fields"]}
-
-        record_copy = record.copy()
-        merge_fields = {}
-        for field, value in record.items():
-            if field in self.custom_fields.values():
-                merge_fields[field] = value
-                record_copy.pop(field)
-        
-        record_copy["merge_fields"] = merge_fields
-        return record_copy
-
-
     def upsert_record(self, record: dict, context: dict):
         state_updates = dict()
         method = "POST"
@@ -446,9 +439,6 @@ class FallbackSink(BaseSink, HotglueSink):
                 # using create or update endpoint for contacts
                 method = "PUT"
                 endpoint = f"/lists/{list_id}/members/{email}"
-
-                # handle custom fields
-                record = self.handle_custom_fields(client, record, list_id)
 
             # send data
             id = record.pop("id", None)

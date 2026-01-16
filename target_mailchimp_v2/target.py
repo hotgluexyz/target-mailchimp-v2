@@ -27,12 +27,12 @@ class TargetMailChimpV2(TargetHotglue):
 
     def get_sink_class(self, stream_name: str):
         """Get sink for a stream."""
-        if stream_name.lower() in [
+        if (stream_name.lower() in [
             "customers",
             "contacts",
             "customer",
             "contact",
-        ] and not self.config.get("use_fallback_sink"):
+        ] and not self.config.get("use_fallback_sink")) or stream_name.lower() == "list_members" and not self.config.get("process_batch_contacts", True):
             return MailChimpV2Sink
         return FallbackSink
 
