@@ -305,6 +305,16 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
             if not record.get("status"):
                 record["status_if_new"] = "subscribed"
             
+            # validate address required fields
+            if record.get("merge_fields").get("ADDRESS"):
+                required_fields = ["addr1", "city", "state", "zip"]
+                missing_fields = []
+                for key, value in record.get("merge_fields").get("ADDRESS").items():
+                    if key in required_fields and not value:
+                        missing_fields.append(key)
+                if missing_fields:
+                    return({"error":f"Missing required address fields {','.join(missing_fields)}.", "externalId": record.get("externalId")})
+            
             # get external id from record
             self.external_ids_dict[record["email_address"]] = record.get("externalId", record["email_address"])
             return record
