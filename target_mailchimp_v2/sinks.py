@@ -6,7 +6,6 @@ import requests
 from mailchimp_marketing.api_client import ApiClientError, ApiClient
 from singer_sdk.sinks import BatchSink
 from target_hotglue.client import HotglueBatchSink, HotglueSink, HotglueBaseSink
-from mailchimp_transactional.api_client import ApiClientError
 
 
 class BaseSink(HotglueBaseSink):
