@@ -309,11 +309,12 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
             if record.get("merge_fields").get("ADDRESS"):
                 required_fields = ["addr1", "city", "state", "zip"]
                 missing_fields = []
-                for key, value in record.get("merge_fields").get("ADDRESS").items():
-                    if key in required_fields and not value:
-                        missing_fields.append(key)
+                address_fields = record.get("merge_fields").get("ADDRESS")
+                for key in required_fields:
+                    if key not in address_fields or not address_fields.get(key):
+                        missing_fields.append(key)    
                 if missing_fields:
-                    return({"error":f"Missing required address fields {','.join(missing_fields)}.", "externalId": record.get("externalId")})
+                    return({"error":f"Missing required address fields: {','.join(missing_fields)}.", "externalId": record.get("externalId")})
             
             # get external id from record
             self.external_ids_dict[record["email_address"]] = record.get("externalId", record["email_address"])
