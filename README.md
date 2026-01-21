@@ -6,8 +6,6 @@ Build with the [Meltano Target SDK](https://sdk.meltano.com).
 
 ## Installation
 
-- [ ] `Developer TODO:` Update the below as needed to correctly describe the install procedure. For instance, if you do not have a PyPi repo, or if you want users to directly install from your git repo, you can modify this step as appropriate.
-
 ```bash
 pipx install target-mailchimp-v2
 ```
@@ -16,7 +14,45 @@ pipx install target-mailchimp-v2
 
 ### Accepted Config Options
 
-- [ ] `Developer TODO:` Provide a list of config options accepted by the target.
+| Setting | Required | Default | Description |
+|---------|----------|---------|-------------|
+| `access_token` | Yes | - | OAuth access token or Mailchimp API key (format: `key-datacenter`, e.g., `abc123-us22`) |
+| `list_name` | No | - | Name of the Mailchimp list/audience to sync contacts to. If not set, the first list found is used. |
+| `subscribe_status` | No | `"subscribed"` | Default subscription status for contacts. Valid values: `subscribed`, `unsubscribed`, `cleaned`, `pending`, `transactional`. |
+| `process_batch_contacts` | No | `true` | When `true`, contact records are transformed from a unified schema into Mailchimp format. When `false`, records are passed through as-is and the fallback sink is used. |
+| `use_fallback_sink` | No | `false` | When `true`, forces use of the FallbackSink (single record processing) instead of MailChimpV2Sink (batch processing) for contact streams. |
+
+### MailChimpV2Sink Behavior
+
+The `MailChimpV2Sink` handles batch processing for contact-related streams (`customers`, `contacts`, `customer`, `contact`, `list_members`).
+
+#### Flag Behaviors
+
+- **`process_batch_contacts: true` (default)**
+  - Transforms incoming records from a unified schema into Mailchimp member format
+  - Automatically maps `name` → `FNAME`/`LNAME` merge fields
+  - Handles `addresses` array → Mailchimp `ADDRESS` merge field
+  - Handles `phone_numbers` array → `PHONE` merge field
+  - Processes `custom_fields` array and creates merge fields if they don't exist
+  - Supports `lists` field for group/interest category assignments (format: `"groupTitle/groupName"`)
+  - Supports `tags` field for contact tagging
+  - Uses `subscribe_status` from config or record-level override
+
+- **`process_batch_contacts: false`**
+  - Records are passed through without transformation
+  - Expects records to already be in Mailchimp's native format
+  - Uses the FallbackSink for single-record processing
+
+- **`use_fallback_sink: true`**
+  - Bypasses batch processing entirely
+  - Uses PUT requests to the `/lists/{list_id}/members/{email}` endpoint
+  - Useful for handling edge cases or when batch processing is not desired
+
+#### Record-Level Overrides
+
+Individual records can override global config settings:
+
+- `subscribe_status`: Set on a record to override the global `subscribe_status` config
 
 A full list of supported settings and capabilities for this
 target is available by running:
@@ -31,13 +67,25 @@ This Singer target will automatically import any environment variables within th
 `.env` if the `--config=ENV` is provided, such that config values will be considered if a matching
 environment variable is set either in the terminal context or in the `.env` file.
 
-### Source Authentication and Authorization
+### Authentication
 
-- [ ] `Developer TODO:` If your target requires special access on the source system, or any special authentication requirements, provide those here.
+The target supports two authentication methods:
+
+1. **OAuth Access Token**: Obtained through Mailchimp's OAuth 2.0 flow. The target will automatically fetch the datacenter from Mailchimp's metadata endpoint.
+
+2. **API Key**: A Mailchimp API key in the format `key-datacenter` (e.g., `abc123-us22`). The datacenter is extracted directly from the key.
+
+Example config with API key:
+```json
+{
+  "access_token": "your-api-key-us22",
+  "list_name": "My Newsletter"
+}
+```
 
 ## Usage
 
-You can easily run `target-mailchimp-v2` by itself or in a pipeline using [Meltano](https://meltano.com/).
+You can easily run `target-mailchimp-v2` by itself or in a pipeline using.
 
 ### Executing the Target Directly
 
@@ -49,8 +97,6 @@ tap-carbon-intensity | target-mailchimp-v2 --config /path/to/target-mailchimp-v2
 ```
 
 ## Developer Resources
-
-- [ ] `Developer TODO:` As a first step, scan the entire project for the text "`TODO:`" and complete any recommended steps, deleting the "TODO" references once completed.
 
 ### Initialize your Development Environment
 
@@ -73,35 +119,3 @@ You can also test the `target-mailchimp-v2` CLI interface directly using `poetry
 ```bash
 poetry run target-mailchimp-v2 --help
 ```
-
-### Testing with [Meltano](https://meltano.com/)
-
-_**Note:** This target will work in any Singer environment and does not require Meltano.
-Examples here are for convenience and to streamline end-to-end orchestration scenarios._
-
-Your project comes with a custom `meltano.yml` project file already created. Open the `meltano.yml` and follow any _"TODO"_ items listed in
-the file.
-
-Next, install Meltano (if you haven't already) and any needed plugins:
-
-```bash
-# Install meltano
-pipx install meltano
-# Initialize meltano within this directory
-cd target-mailchimp-v2
-meltano install
-```
-
-Now you can test and orchestrate using Meltano:
-
-```bash
-# Test invocation:
-meltano invoke target-mailchimp-v2 --version
-# OR run a test `elt` pipeline with the Carbon Intensity sample tap:
-meltano elt tap-carbon-intensity target-mailchimp-v2
-```
-
-### SDK Dev Guide
-
-See the [dev guide](https://sdk.meltano.com/en/latest/dev_guide.html) for more instructions on how to use the Meltano SDK to
-develop your own Singer taps and targets.

@@ -6,11 +6,12 @@ import requests
 from mailchimp_marketing.api_client import ApiClientError, ApiClient
 from singer_sdk.sinks import BatchSink
 from target_hotglue.client import HotglueBatchSink, HotglueSink, HotglueBaseSink
-
+import json
 
 class BaseSink(HotglueBaseSink):
     server = None
     contact_names = ["customers", "contacts", "customer", "contact", "list_members"]
+    list_id = None
 
     @property
     def name(self) -> str:
@@ -49,24 +50,26 @@ class BaseSink(HotglueBaseSink):
         return self.server
 
     def get_list_id(self):
-        client = MailchimpMarketing.Client()
-        server = self.get_server()
-        client.set_config(
-            {"access_token": self.config.get("access_token"), "server": server}
-        )
-        response = client.lists.get_all_lists()
-        self.logger.info(response)
+        if self.list_id is None:
+            client = MailchimpMarketing.Client()
+            server = self.get_server()
+            client.set_config(
+                {"access_token": self.config.get("access_token"), "server": server}
+            )
+            response = client.lists.get_all_lists()
+            self.logger.info(response)
 
-        config_name = self.config.get("list_name")
-        if "lists" in response:
-            for row in response["lists"]:
-                # Handle case where they don't set a list_name in config
-                if not config_name:
-                    return row["id"]
+            config_name = self.config.get("list_name")
+            if "lists" in response:
+                for row in response["lists"]:
+                    # Handle case where they don't set a list_name in config
+                    if not config_name:
+                        self.list_id = row["id"]
 
-                # NOTE: Making case insensitive to avoid issues
-                if row["name"].lower() == config_name.lower():
-                    return row["id"]
+                    # NOTE: Making case insensitive to avoid issues
+                    if row["name"].lower() == config_name.lower():
+                        self.list_id = row["id"]
+        return self.list_id
 
 
 class MailChimpV2Sink(BaseSink, HotglueBatchSink):
@@ -403,7 +406,7 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
 class FallbackSink(BaseSink, HotglueSink):
     """Precoro target sink class."""
 
-    custom_fields = None
+    primary_key = "id"
 
     @property
     def base_url(self) -> str:
@@ -456,7 +459,7 @@ class FallbackSink(BaseSink, HotglueSink):
             # send data
             id = record.pop("id", None)
             if id:
-                method = "PUT"
+                method = self.update_method if hasattr(self, "update_method") else "PUT"
                 endpoint = f"{endpoint}/{id}"
 
             # send data
@@ -470,5 +473,17 @@ class FallbackSink(BaseSink, HotglueSink):
             response = client.call_api(
                 resource_path=endpoint, method=method, body=record
             )
-            id = response["id"]
+            id = response[self.primary_key]
             return id, True, state_updates
+
+
+class CustomFieldsSink(FallbackSink):
+    """Custom fields sink class."""
+
+    @property
+    def endpoint(self) -> str:
+        list_id = self.get_list_id()
+        return f"/lists/{list_id}/merge-fields"
+
+    update_method = "PATCH"
+    primary_key = "merge_id"
