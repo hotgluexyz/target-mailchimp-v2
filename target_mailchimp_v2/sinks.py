@@ -471,9 +471,12 @@ class FallbackSink(BaseSink, HotglueSink):
                     "server": self.get_server(),
                 }
             )
-            response = client.call_api(
-                resource_path=endpoint, method=method, body=record
-            )
+            try:
+                response = client.call_api(
+                    resource_path=endpoint, method=method, body=record
+                )
+            except ApiClientError as e:
+                return None, False, {"error": e.text}
             id = response[self.primary_key]
             return id, True, state_updates
 
