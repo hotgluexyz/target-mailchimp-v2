@@ -71,7 +71,7 @@ class BaseSink(HotglueBaseSink):
                     if row["name"].lower() == config_name.lower():
                         self.list_id = row["id"]
                         return self.list_id
-
+        return self.list_id
 
 class MailChimpV2Sink(BaseSink, HotglueBatchSink):
     max_size = 500  # Max records to write in one batch
