@@ -64,12 +64,13 @@ class BaseSink(HotglueBaseSink):
                 for row in response["lists"]:
                     # Handle case where they don't set a list_name in config
                     if not config_name:
-                        self.list_id = row["id"]
+                        self.list_id = row["id"]   
+                        return self.list_id
 
                     # NOTE: Making case insensitive to avoid issues
                     if row["name"].lower() == config_name.lower():
                         self.list_id = row["id"]
-        return self.list_id
+                        return self.list_id
 
 
 class MailChimpV2Sink(BaseSink, HotglueBatchSink):
