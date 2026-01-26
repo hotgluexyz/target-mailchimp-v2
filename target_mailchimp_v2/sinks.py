@@ -253,7 +253,7 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
             member_dict["merge_fields"] = merge_fields
 
             # add email and externalid to externalid dict for state
-            self.external_ids_dict[record["email"]] = record.get("externalId", record["email"])
+            self.external_ids_dict[record["email"].lower()] = record.get("externalId", record["email"])
 
             # add groups 
             lists = record.get("lists")
@@ -321,7 +321,7 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
                     return({"error":f"Missing required address fields: {','.join(missing_fields)}.", "externalId": record.get("externalId")})
             
             # get external id from record
-            self.external_ids_dict[record["email_address"]] = record.get("externalId", record["email_address"])
+            self.external_ids_dict[record["email_address"].lower()] = record.get("externalId", record["email_address"])
             return record
 
     def make_batch_request(self, records):
@@ -365,14 +365,14 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
             state_updates.append({
                 "success": True,
                 "id": member["id"],
-                "externalId": self.external_ids_dict.get(member.get("email_address"))
+                "externalId": self.external_ids_dict.get(member.get("email_address", "").lower())
             })
 
         for error in response.get("errors", []):
             state_updates.append({
                 "success": False,
                 "error": f"error: {error.get('error')}, field: {error.get('field')}, field_message: {error.get('value')}",
-                "externalId": self.external_ids_dict.get(error.get("email_address"))
+                "externalId": self.external_ids_dict.get(error.get("email_address", "").lower())
             })
         
         for map_error in map_errors:
