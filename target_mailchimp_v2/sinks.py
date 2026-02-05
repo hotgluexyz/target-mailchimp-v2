@@ -4,9 +4,44 @@
 import mailchimp_marketing as MailchimpMarketing
 import requests
 from mailchimp_marketing.api_client import ApiClientError, ApiClient
-from singer_sdk.sinks import BatchSink
-from target_hotglue.client import HotglueBatchSink, HotglueSink, HotglueBaseSink
+from hotglue_singer_sdk.target_sdk.client import HotglueBatchSink, HotglueSink, HotglueBaseSink
 import json
+from hotglue_etl_exceptions import InvalidCredentialsError, InvalidPayloadError
+from hotglue_singer_sdk.exceptions import FatalAPIError, RetriableAPIError
+
+def classify_batch_error_or_false(error: dict) -> str:
+    if error.get("error_code") == "ERROR_GENERIC":
+        return {"hg_error_class": InvalidPayloadError.__name__}
+    return False
+
+def handle_call_api_error(logger, error: ApiClientError, custom_message_start: str = "", custom_message_end: str = "") -> None:
+    if (hasattr(error,'status_code')):
+        if (error.status_code == 401 or error.status_code == 403):
+            raise InvalidCredentialsError(custom_message_start + error.text or str(error) + custom_message_end)
+        if (error.status_code == 400):
+            raise InvalidPayloadError(custom_message_start + error.text or str(error) + custom_message_end)
+        if (custom_message_start != "" or custom_message_end != ""):
+            logger.exception("Error: {}".format(custom_message_start + error.text or str(error) + custom_message_end))
+            raise Exception(custom_message_start + error.text or str(error) + custom_message_end)
+
+        logger.exception("Error: {}".format(str(error)))
+        raise error
+
+    if (hasattr(error,'status')):
+        if (error.status == 401 or error.status == 403):
+            raise InvalidCredentialsError(custom_message_start + error.text or str(error) + custom_message_end)
+        if (error.status == 400):
+            raise InvalidPayloadError(custom_message_start + error.text or str(error) + custom_message_end)
+        if (custom_message_start != "" or custom_message_end != ""):
+            logger.exception("Error: {}".format(custom_message_start + error.text or str(error) + custom_message_end))
+            raise Exception(custom_message_start + error.text or str(error) + custom_message_end)
+
+    if (custom_message_start != "" or custom_message_end != ""):
+        logger.exception("Error: {}".format(custom_message_start + error.text or str(error) + custom_message_end))
+        raise Exception(custom_message_start + error.text or str(error) + custom_message_end)
+
+    logger.exception("Error: {}".format(error.text or str(error)))
+    raise error
 
 class BaseSink(HotglueBaseSink):
     server = None
@@ -39,6 +74,10 @@ class BaseSink(HotglueBaseSink):
         ).json()
 
         if "error" in metadata:
+            if (metadata["error"] == "invalid_token"):
+                raise InvalidCredentialsError(metadata["error"])
+            if "error_description" in metadata:
+                raise Exception(metadata["error"] + ", " + metadata["error_description"])
             raise Exception(metadata["error"])
 
         return metadata["dc"]
@@ -56,7 +95,10 @@ class BaseSink(HotglueBaseSink):
             client.set_config(
                 {"access_token": self.config.get("access_token"), "server": server}
             )
-            response = client.lists.get_all_lists()
+            try:
+                response = client.lists.get_all_lists()
+            except ApiClientError as error:
+                handle_call_api_error(self.logger, error)
             self.logger.info(response)
 
             config_name = self.config.get("list_name")
@@ -72,6 +114,27 @@ class BaseSink(HotglueBaseSink):
                         self.list_id = row["id"]
                         return self.list_id
         return self.list_id
+
+    def upsert_record(self, record: dict, context: dict):
+        response = self.request_api("POST", request_data=record)
+        id = response.json().get("id")
+        return id, response.ok, dict()
+
+
+    def validate_response(self, response: requests.Response) -> None:
+        """Validate HTTP response."""
+
+        if response.status_code == 400:
+            raise InvalidPayloadError(response.text or response)
+
+        if response.status_code == 401 or response.status_code == 403:
+            raise InvalidCredentialsError(response.text or response)
+
+        # Potential timeout error, will retry
+        if response.status_code == 502:
+            raise RetriableAPIError(response.text or response)
+
+        super().validate_response(response)
 
 class MailChimpV2Sink(BaseSink, HotglueBatchSink):
     max_size = 500  # Max records to write in one batch
@@ -97,7 +160,11 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
         try:
             self.list_id = self.get_list_id()
         except ApiClientError as error:
-            self.logger.exception("Error: {}".format(error.text))
+            self.logger.exception("Error: {}".format(str(error)))
+        except InvalidCredentialsError as error:
+            self.logger.exception("Error: {}".format(str(error)))
+        except InvalidPayloadError as error:
+            self.logger.exception("Error: {}".format(str(error)))
     
     def clean_convert(self, input):
         allowed_values = [0, "", False]
@@ -118,7 +185,10 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
     def handle_custom_fields(self, client, record_custom_fields, merge_fields):
         #Check and populate custom fields as merge fields
         if self.custom_fields is None:
-            _merge_fields = client.lists.get_list_merge_fields(self.list_id)
+            try:
+                _merge_fields = client.lists.get_list_merge_fields(self.list_id)
+            except ApiClientError as error:
+                handle_call_api_error(self.logger, error)
             self.custom_fields = {field["name"]: field["tag"] for field in _merge_fields["merge_fields"]}
 
         if not isinstance(record_custom_fields, list):
@@ -139,7 +209,10 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
                 merge_fields[self.custom_fields[field_name]] = field.get("value")
             # if custom field doesn't exist create it
             else:
-                merge_field_res = client.lists.add_list_merge_field(self.list_id,{"name":field_name,"type":"text"})
+                try:
+                    merge_field_res = client.lists.add_list_merge_field(self.list_id,{"name":field_name,"type":"text"})
+                except ApiClientError as error:
+                    handle_call_api_error(self.logger, error)
                 self.custom_fields.update({merge_field_res["name"]: merge_field_res["tag"]})
         return merge_fields
 
@@ -344,7 +417,9 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
 
                         return response
                     except ApiClientError as error:
-                        raise Exception("Error: None of the records went through due to error '{}', no state available.".format(error.text))
+                        custom_message_start = "Error: None of the records went through due to error "
+                        custom_message_end = ", no state available."
+                        handle_call_api_error(self.logger, error, custom_message_start, custom_message_end)
                 else:
                     return {}
             else:
@@ -369,19 +444,28 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
             })
 
         for error in response.get("errors", []):
-            state_updates.append({
+            error_state_dict = {
                 "success": False,
                 "error": f"error: {error.get('error')}, field: {error.get('field')}, field_message: {error.get('value')}",
                 "externalId": self.external_ids_dict.get(error.get("email_address", "").lower())
-            })
+            }
+            if classify_batch_error_or_false(error):
+                error_state_dict.update(classify_batch_error_or_false(error))
+            self.logger.info(f"Error state dict: {error_state_dict}")
+            state_updates.append(error_state_dict)
         
         for map_error in map_errors:
-            state_updates.append({
+            map_error_state_dict = {
                 "success": False,
                 "error": map_error.get("error"),
                 "externalId": map_error.get("externalId")
-            })
+            }
+            if classify_batch_error_or_false(map_error):
+                map_error_state_dict.update(classify_batch_error_or_false(map_error))
 
+            self.logger.info(f"Error state dict: {map_error_state_dict}")
+
+            state_updates.append(map_error_state_dict)
         return {"state_updates": state_updates}
 
 

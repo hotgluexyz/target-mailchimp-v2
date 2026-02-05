@@ -1,12 +1,12 @@
 """MailChimp-V2 target class."""
 
-from singer_sdk import typing as th
-from singer_sdk.target_base import Target
-from target_hotglue.target import TargetHotglue
-from target_hotglue.target_base import update_state
+from hotglue_singer_sdk import typing as th
+from hotglue_singer_sdk.target_sdk.target import TargetHotglue
+from hotglue_singer_sdk.target_sdk.target_base import update_state
 import copy
-from singer_sdk.sinks import BatchSink
-from singer_sdk.helpers._compat import final
+from hotglue_singer_sdk.sinks import BatchSink
+from hotglue_singer_sdk.helpers._compat import final
+from hotglue_singer_sdk.helpers.capabilities import AlertingLevel
 
 from target_mailchimp_v2.sinks import MailChimpV2Sink, FallbackSink, CustomFieldsSink
 
@@ -24,6 +24,7 @@ class TargetMailChimpV2(TargetHotglue):
     ).to_dict()
     default_sink_class = MailChimpV2Sink
     SINK_TYPES = []
+    alerting_level = AlertingLevel.ERROR
 
     def get_sink_class(self, stream_name: str):
         """Get sink for a stream."""
