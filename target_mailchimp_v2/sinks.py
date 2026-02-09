@@ -163,7 +163,7 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
         try:
             self.list_id = self.get_list_id()
         except ApiClientError as error:
-            self.handle_call_api_error(self.logger, error)
+            handle_call_api_error(self.logger, error)
     
     def clean_convert(self, input):
         allowed_values = [0, "", False]
