@@ -124,12 +124,6 @@ class BaseSink(HotglueBaseSink):
                         return self.list_id
         return self.list_id
 
-    def upsert_record(self, record: dict, context: dict):
-        response = self.request_api("POST", request_data=record)
-        id = response.json().get("id")
-        return id, response.ok, dict()
-
-
     def validate_response(self, response: requests.Response) -> None:
         """Validate HTTP response."""
 
