@@ -10,7 +10,7 @@ from hotglue_etl_exceptions import InvalidCredentialsError, InvalidPayloadError
 from hotglue_singer_sdk.exceptions import FatalAPIError, RetriableAPIError
 
 def classify_batch_error_or_false(error: dict) -> str:
-    if error.get("error_code") == "ERROR_GENERIC":
+    if error.get("error_code") in ["ERROR_GENERIC", "HG_EMAIL_REQUIRED", "HG_ADDRESS_FORMAT_ERROR", "HG_LIST_ITEM_FORMAT_ERROR", "HG_GROUP_TITLE_NOT_FOUND", "HG_ADDRESS_MISSING_FIELDS"]:
         return {"hg_error_class": InvalidPayloadError.__name__}
     return False
 
@@ -42,6 +42,15 @@ def handle_call_api_error(logger, error: ApiClientError, custom_message_start: s
 
     logger.exception("Error: {}".format(error.text or str(error)))
     raise error
+
+def get_email_if_exists(record: dict) -> str:
+    # Note that Mailchimp strips whitespace from email anyways, we do it here so we map correctly to externalIds
+    if record.get("email_address"):
+        return record.get("email_address").strip() if isinstance(record.get("email_address"), str) else record.get("email_address")
+    elif record.get("email"):
+        return record.get("email").strip() if isinstance(record.get("email"), str) else record.get("email").strip()
+    else:
+        return None
 
 class BaseSink(HotglueBaseSink):
     server = None
@@ -218,6 +227,12 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
 
     def process_batch_record(self, record: dict, index: int) -> dict:
         if self.stream_name.lower() in self.contact_names and self.config.get("process_batch_contacts", True):
+            # Email is required, Mailchimp calls it email_address, unified schema calls it email
+            email = get_email_if_exists(record)
+
+            if email is None:
+                return({"error":"Email was not provided and it's a required value", "externalId": record.get("externalId"), "error_code": "HG_EMAIL_REQUIRED"})
+
             if record.get("name"):
                 first_name, *last_name = record["name"].split()
                 last_name = " ".join(last_name)
@@ -234,17 +249,13 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
                 "timezone": "",
                 "region": "",
             }
-
-            # validate if email has been provided, it's a required field
-            if not record.get("email"):
-                return({"error":"Email was not provided and it's a required value", "externalId": record.get("externalId")})
             
             address = None
             addresses = record.get("addresses")
             if addresses:
                 # sometimes it comes as a dict
                 if not isinstance(addresses, list):
-                    return({"error":"Addresses field is not formatted correctly, addresses format should be: [{'line1': 'xxxxx', 'city': 'xxxxx', 'state':'xxxxx', 'postal_code':'xxxxx'}]", "externalId": record.get("externalId")})
+                    return({"error":"Addresses field is not formatted correctly, addresses format should be: [{'line1': 'xxxxx', 'city': 'xxxxx', 'state':'xxxxx', 'postal_code':'xxxxx'}]", "externalId": record.get("externalId"), "error_code": "HG_ADDRESS_FORMAT_ERROR"})
                 
                 address_dict = record["addresses"][0]
 
@@ -265,7 +276,7 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
                 required_fields = ["addr1", "city", "state", "zip"]
                 for key, value in address.items():
                     if key in required_fields and not value:
-                        self.logger.info(f"Ignoring address due to empty or missing required fields: line1, city, zip, postal_code for record with email {record['email']}")
+                        self.logger.info(f"Ignoring address due to empty or missing required fields: line1, city, zip, postal_code for record with email {email}")
                         address = None
 
                 location.update(
@@ -285,7 +296,7 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
 
             # Build member dictionary and adds merge_fields without content
             member_dict = {
-                "email_address": record["email"],
+                "email_address": email,
                 "status": subscribed_status,
                 "merge_fields": {},
                 "location": location,
@@ -325,9 +336,6 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
 
             member_dict["merge_fields"] = merge_fields
 
-            # add email and externalid to externalid dict for state
-            self.external_ids_dict[record["email"].lower()] = record.get("externalId", record["email"])
-
             # add groups 
             lists = record.get("lists")
             if record.get("lists"):
@@ -351,7 +359,7 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
                     try:
                         group_title, group_name = list_name.split("/")
                     except:
-                        return({"error":f"Failed to post: List item '{list_name}' format is incorrect or incomplete, list item format should be 'groupTitle/groupName'", "externalId": record.get("externalId")})
+                        return({"error":f"Failed to post: List item '{list_name}' format is incorrect or incomplete, list item format should be 'groupTitle/groupName'", "externalId": record.get("externalId"), "error_code": "HG_LIST_ITEM_FORMAT_ERROR"})
                     
                     # check if group title exists
                     if self.groups_dict.get(group_title):
@@ -364,7 +372,7 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
                         # add group name to lists_ids for payload
                         group_name_ids.append(self.groups_dict[group_title]["group_names"][group_name])
                     else:
-                        return({"error":f"Group title {group_title} not found in this account.", "externalId": record.get("externalId")})                
+                        return({"error":f"Group title {group_title} not found in this account.", "externalId": record.get("externalId"), "error_code": "HG_GROUP_TITLE_NOT_FOUND"})                
 
                 member_dict["interests"] = {group_name_id: True for group_name_id in group_name_ids}
 
@@ -372,12 +380,16 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
             member_dict = self.clean_convert(member_dict)
             if record.get("tags"):
                 member_dict['tags'] = record.get('tags', [])
+
+            # add email and externalid to externalid dict for state
+            self.external_ids_dict[member_dict.get("email_address", "").lower()] = record.get("externalId", member_dict.get("email_address"))
+
             return member_dict
         
         else:
             # validate if email has been provided, it's a required field
             if not record.get("email_address"):
-                return({"error":"Email was not provided and it's a required value", "externalId": record.get("externalId")})
+                return({"error":"Email was not provided and it's a required value", "externalId": record.get("externalId"), "error_code": "HG_EMAIL_REQUIRED"})
             
             if not record.get("status"):
                 record["status_if_new"] = "subscribed"
@@ -391,7 +403,7 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
                     if key not in address_fields or not address_fields.get(key):
                         missing_fields.append(key)    
                 if missing_fields:
-                    return({"error":f"Missing required address fields: {','.join(missing_fields)}.", "externalId": record.get("externalId")})
+                    return({"error":f"Missing required address fields: {','.join(missing_fields)}.", "externalId": record.get("externalId"), "error_code": "HG_ADDRESS_MISSING_FIELDS"})
             
             # get external id from record
             self.external_ids_dict[record["email_address"].lower()] = record.get("externalId", record["email_address"])
@@ -526,15 +538,16 @@ class FallbackSink(BaseSink, HotglueSink):
             # custom logic for contacts
             if self.stream_name.lower() in self.contact_names:
                 # add email to the endpoint to use create or update endpoint
-                email = record.get("email_address")
-                if not email:
-                    raise Exception(
+                email = get_email_if_exists(record)
+
+                if email is None:
+                    raise InvalidPayloadError(
                         f"No email found for record {record}, email is a required field."
                     )
                 # get list id
                 list_id = self.get_list_id()
                 if not list_id:
-                    raise Exception(
+                    raise InvalidPayloadError(
                         f"No list id found to send record with email {email}"
                     )
                 # using create or update endpoint for contacts
@@ -560,7 +573,7 @@ class FallbackSink(BaseSink, HotglueSink):
                     resource_path=endpoint, method=method, body=record
                 )
             except ApiClientError as e:
-                return None, False, {"error": e.text}
+                handle_call_api_error(self.logger, e)
             id = response[self.primary_key]
             return id, True, state_updates
 
