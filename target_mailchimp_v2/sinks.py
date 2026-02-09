@@ -224,7 +224,7 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
             # Email is required, Mailchimp calls it email_address, unified schema calls it email
             email = get_email_if_exists(record)
 
-            if email:
+            if not email:
                 return({"error":"Email was not provided and it's a required value", "externalId": record.get("externalId"), "error_code": "HG_EMAIL_REQUIRED"})
 
             if record.get("name"):
@@ -534,7 +534,7 @@ class FallbackSink(BaseSink, HotglueSink):
                 # add email to the endpoint to use create or update endpoint
                 email = get_email_if_exists(record)
 
-                if email:
+                if not email:
                     raise InvalidPayloadError(
                         f"No email found for record {record}, email is a required field."
                     )
