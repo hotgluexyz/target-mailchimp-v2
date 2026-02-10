@@ -89,12 +89,12 @@ class BaseSink(HotglueBaseSink):
 
     def get_list_id(self):
         if self.list_id is None:
-            client = MailchimpMarketing.Client()
-            server = self.get_server()
-            client.set_config(
-                {"access_token": self.config.get("access_token"), "server": server}
-            )
             try:
+                client = MailchimpMarketing.Client()
+                server = self.get_server()
+                client.set_config(
+                    {"access_token": self.config.get("access_token"), "server": server}
+                )
                 response = client.lists.get_all_lists()
             except ApiClientError as error:
                 handle_call_api_error(self.logger, error)
@@ -150,10 +150,8 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
         return record
 
     def start_batch(self, context: dict) -> None:
-        try:
-            self.list_id = self.get_list_id()
-        except ApiClientError as error:
-            handle_call_api_error(self.logger, error)
+        self.list_id = self.get_list_id()
+
     
     def clean_convert(self, input):
         allowed_values = [0, "", False]
