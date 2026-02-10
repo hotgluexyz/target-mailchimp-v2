@@ -15,32 +15,22 @@ def classify_batch_error_or_false(error: dict) -> str:
     return False
 
 def handle_call_api_error(logger, error: ApiClientError, custom_message_start: str = "", custom_message_end: str = "") -> None:
-    if (hasattr(error,'status_code')):
-        if (error.status_code == 401 or error.status_code == 403):
-            raise InvalidCredentialsError(custom_message_start + error.text or str(error) + custom_message_end)
-        if (error.status_code == 400):
-            raise InvalidPayloadError(custom_message_start + error.text or str(error) + custom_message_end)
-        if (custom_message_start != "" or custom_message_end != ""):
-            logger.exception("Error: {}".format(custom_message_start + error.text or str(error) + custom_message_end))
-            raise Exception(custom_message_start + (error.text or str(error)) + custom_message_end)
 
-        logger.exception("Error: {}".format(str(error)))
-        raise error
+    status_code = error.status_code if hasattr(error,'status_code') else error.status if hasattr(error,'status') else None
+    error_message = error.text or str(error)
+    custom_error_message = custom_message_start + error_message + custom_message_end
 
-    if (hasattr(error,'status')):
-        if (error.status == 401 or error.status == 403):
-            raise InvalidCredentialsError(custom_message_start + error.text or str(error) + custom_message_end)
-        if (error.status == 400):
-            raise InvalidPayloadError(custom_message_start + error.text or str(error) + custom_message_end)
-        if (custom_message_start != "" or custom_message_end != ""):
-            logger.exception("Error: {}".format(custom_message_start + error.text or str(error) + custom_message_end))
-            raise Exception(custom_message_start + error.text or str(error) + custom_message_end)
+    if status_code is not None:
+        if (status_code == 401 or status_code == 403):
+            raise InvalidCredentialsError(custom_error_message)
+        if (status_code == 400):
+            raise InvalidPayloadError(custom_error_message)
 
-    if (custom_message_start != "" or custom_message_end != ""):
-        logger.exception("Error: {}".format(custom_message_start + error.text or str(error) + custom_message_end))
-        raise Exception(custom_message_start + error.text or str(error) + custom_message_end)
+    logger.exception("Error: {}".format(custom_error_message))
 
-    logger.exception("Error: {}".format(error.text or str(error)))
+    if (custom_error_message != error_message):
+        raise Exception(custom_error_message)
+
     raise error
 
 def get_email_if_exists(record: dict) -> str:
