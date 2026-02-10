@@ -9,7 +9,7 @@ import json
 from hotglue_etl_exceptions import InvalidCredentialsError, InvalidPayloadError
 from hotglue_singer_sdk.exceptions import FatalAPIError, RetriableAPIError
 
-def classify_batch_error_or_false(error: dict) -> str:
+def classify_batch_error_or_false(error: dict):
     if error.get("error_code") in ["ERROR_GENERIC", "HG_EMAIL_REQUIRED", "HG_ADDRESS_FORMAT_ERROR", "HG_LIST_ITEM_FORMAT_ERROR", "HG_GROUP_TITLE_NOT_FOUND", "HG_ADDRESS_MISSING_FIELDS"]:
         return {"hg_error_class": InvalidPayloadError.__name__}
     return False
@@ -33,7 +33,7 @@ def handle_call_api_error(logger, error: ApiClientError, custom_message_start: s
 
     raise error
 
-def get_email_if_exists(record: dict) -> str:
+def get_email_if_exists(record: dict):
     # Note that Mailchimp strips whitespace from email anyways, we do it here so we map correctly to externalIds
     if record.get("email_address"):
         return record.get("email_address").strip() if isinstance(record.get("email_address"), str) else record.get("email_address")
