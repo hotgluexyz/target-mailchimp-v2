@@ -119,14 +119,14 @@ class BaseSink(HotglueBaseSink):
         """Validate HTTP response."""
 
         if response.status_code == 400:
-            raise InvalidPayloadError(response.text or response)
+            raise InvalidPayloadError(response.text or str(response))
 
         if response.status_code == 401 or response.status_code == 403:
-            raise InvalidCredentialsError(response.text or response)
+            raise InvalidCredentialsError(response.text or str(response))
 
         # Potential timeout error, will retry
         if response.status_code == 502:
-            raise RetriableAPIError(response.text or response)
+            raise RetriableAPIError(response.text or str(response))
 
         super().validate_response(response)
 

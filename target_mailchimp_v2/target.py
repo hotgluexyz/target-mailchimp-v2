@@ -32,7 +32,7 @@ class TargetMailChimpV2(TargetHotglue):
             "customers",
             "contacts",
             "customer",
-            "contact",
+            "contact"
         ] and not self.config.get("use_fallback_sink")) or stream_name.lower() == "list_members" and not self.config.get("process_batch_contacts", True):
             return MailChimpV2Sink
         elif stream_name.lower() == "custom_fields":
