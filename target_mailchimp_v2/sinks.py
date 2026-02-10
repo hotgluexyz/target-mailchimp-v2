@@ -96,22 +96,23 @@ class BaseSink(HotglueBaseSink):
                     {"access_token": self.config.get("access_token"), "server": server}
                 )
                 response = client.lists.get_all_lists()
+                self.logger.info(response)
+
+                config_name = self.config.get("list_name")
+                if "lists" in response:
+                    for row in response["lists"]:
+                        # Handle case where they don't set a list_name in config
+                        if not config_name:
+                            self.list_id = row["id"]   
+                            return self.list_id
+
+                        # NOTE: Making case insensitive to avoid issues
+                        if row["name"].lower() == config_name.lower():
+                            self.list_id = row["id"]
+                            return self.list_id
             except ApiClientError as error:
                 handle_call_api_error(self.logger, error)
-            self.logger.info(response)
 
-            config_name = self.config.get("list_name")
-            if "lists" in response:
-                for row in response["lists"]:
-                    # Handle case where they don't set a list_name in config
-                    if not config_name:
-                        self.list_id = row["id"]   
-                        return self.list_id
-
-                    # NOTE: Making case insensitive to avoid issues
-                    if row["name"].lower() == config_name.lower():
-                        self.list_id = row["id"]
-                        return self.list_id
         return self.list_id
 
     def validate_response(self, response: requests.Response) -> None:
