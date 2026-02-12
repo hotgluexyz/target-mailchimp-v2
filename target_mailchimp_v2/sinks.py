@@ -88,6 +88,9 @@ class BaseSink(HotglueBaseSink):
         return self.server
 
     def get_list_id(self):
+
+        config_name = self.config.get("list_name")
+
         if self.list_id is None:
             try:
                 client = MailchimpMarketing.Client()
@@ -98,7 +101,6 @@ class BaseSink(HotglueBaseSink):
                 response = client.lists.get_all_lists()
                 self.logger.info(response)
 
-                config_name = self.config.get("list_name")
                 if "lists" in response:
                     for row in response["lists"]:
                         # Handle case where they don't set a list_name in config
@@ -112,6 +114,10 @@ class BaseSink(HotglueBaseSink):
                             return self.list_id
             except ApiClientError as error:
                 handle_call_api_error(self.logger, error)
+
+        if self.list_id is None:
+            config_message = f" List name: '{config_name}' found in config, but not found in Mailchimp." if config_name else ""
+            raise InvalidCredentialsError(f"No list id found.{config_message}")
 
         return self.list_id
 
@@ -525,10 +531,7 @@ class FallbackSink(BaseSink, HotglueSink):
                     )
                 # get list id
                 list_id = self.get_list_id()
-                if not list_id:
-                    raise InvalidPayloadError(
-                        f"No list id found to send record with email {email}"
-                    )
+
                 # using create or update endpoint for contacts
                 method = "PUT"
                 endpoint = f"/lists/{list_id}/members/{email}"
