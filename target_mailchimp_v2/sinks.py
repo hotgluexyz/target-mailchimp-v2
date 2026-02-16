@@ -1,13 +1,13 @@
 """MailChimp-V2 target sink class, which handles writing streams."""
 
 
+from functools import cached_property
 import mailchimp_marketing as MailchimpMarketing
 import requests
-from mailchimp_marketing.api_client import ApiClientError, ApiClient
+from mailchimp_marketing.api_client import ApiClientError
 from hotglue_singer_sdk.target_sdk.client import HotglueBatchSink, HotglueSink, HotglueBaseSink
-import json
 from hotglue_etl_exceptions import InvalidCredentialsError, InvalidPayloadError
-from hotglue_singer_sdk.exceptions import FatalAPIError, RetriableAPIError
+from hotglue_singer_sdk.exceptions import RetriableAPIError
 
 def classify_batch_error_or_false(error: dict):
     if error.get("error_code") in ["ERROR_GENERIC", "HG_EMAIL_REQUIRED", "HG_ADDRESS_FORMAT_ERROR", "HG_LIST_ITEM_FORMAT_ERROR", "HG_GROUP_TITLE_NOT_FOUND", "HG_ADDRESS_MISSING_FIELDS"]:
@@ -45,7 +45,6 @@ def get_email_if_exists(record: dict):
 class BaseSink(HotglueBaseSink):
     server = None
     contact_names = ["customers", "contacts", "customer", "contact", "list_members"]
-    list_id = None
 
     @property
     def name(self) -> str:
@@ -87,39 +86,34 @@ class BaseSink(HotglueBaseSink):
 
         return self.server
 
-    def get_list_id(self):
+    @cached_property
+    def list_id(self):
 
         config_name = self.config.get("list_name")
 
-        if self.list_id is None:
-            try:
-                client = MailchimpMarketing.Client()
-                server = self.get_server()
-                client.set_config(
-                    {"access_token": self.config.get("access_token"), "server": server}
-                )
-                response = client.lists.get_all_lists()
-                self.logger.info(response)
+        try:
+            client = MailchimpMarketing.Client()
+            server = self.get_server()
+            client.set_config(
+                {"access_token": self.config.get("access_token"), "server": server}
+            )
+            response = client.lists.get_all_lists()
+            self.logger.info(response)
 
-                if "lists" in response:
-                    for row in response["lists"]:
-                        # Handle case where they don't set a list_name in config
-                        if not config_name:
-                            self.list_id = row["id"]   
-                            return self.list_id
+            if "lists" in response:
+                for row in response["lists"]:
+                    # Handle case where they don't set a list_name in config
+                    if not config_name:
+                        return row["id"]
 
-                        # NOTE: Making case insensitive to avoid issues
-                        if row["name"].lower() == config_name.lower():
-                            self.list_id = row["id"]
-                            return self.list_id
-            except ApiClientError as error:
-                handle_call_api_error(self.logger, error)
+                    # NOTE: Making case insensitive to avoid issues
+                    if row["name"].lower() == config_name.lower():
+                        return row["id"]
+        except ApiClientError as error:
+            handle_call_api_error(self.logger, error)
 
-        if self.list_id is None:
-            config_message = f" List name: '{config_name}' found in config, but not found in Mailchimp." if config_name else ""
-            raise InvalidCredentialsError(f"No list id found.{config_message}")
-
-        return self.list_id
+        config_message = f" List name: '{config_name}' found in config, but not found in Mailchimp." if config_name else ""
+        raise InvalidCredentialsError(f"No list id found.{config_message}")
 
     def validate_response(self, response: requests.Response) -> None:
         """Validate HTTP response."""
@@ -138,7 +132,6 @@ class BaseSink(HotglueBaseSink):
 
 class MailChimpV2Sink(BaseSink, HotglueBatchSink):
     max_size = 500  # Max records to write in one batch
-    list_id = None
     server = None
     custom_fields = None
     external_ids_dict = {}
@@ -152,14 +145,12 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
         return None
 
     groups_dict = None
+    
+
 
     def preprocess_record(self, record: dict, context: dict) -> dict:
         return record
 
-    def start_batch(self, context: dict) -> None:
-        self.list_id = self.get_list_id()
-
-    
     def clean_convert(self, input):
         allowed_values = [0, "", False]
         if isinstance(input, list):
@@ -186,7 +177,7 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
             self.custom_fields = {field["name"]: field["tag"] for field in _merge_fields["merge_fields"]}
 
         if not isinstance(record_custom_fields, list):
-            self.logger.info(f"Skipping custom fields, custom fields should be a list of dicts")
+            self.logger.info("Skipping custom fields, custom fields should be a list of dicts")
         for field in record_custom_fields:
             if not isinstance(field, dict):
                 self.logger.info(f"Custom field format is incorrect, skipping custom field {field}")
@@ -302,18 +293,23 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
 
             # initialize server
             client = MailchimpMarketing.Client()
-            server = self.get_server()
+            try:
+                server = self.get_server()
+            except InvalidCredentialsError as e:
+                return {"error":f"Invalid credentials: {e}", "externalId": record.get("externalId"), "error_code": "HG_INVALID_CREDENTIALS"}
             client.set_config(
                 {"access_token": self.config.get("access_token"), "server": server}
             )
-            
-            merge_fields = self.handle_custom_fields(client, record.get("custom_fields", []), merge_fields)
+            try:
+                merge_fields = self.handle_custom_fields(client, record.get("custom_fields", []), merge_fields)
+            except InvalidCredentialsError as e:
+                return {"error":f"Invalid credentials: {e}", "externalId": record.get("externalId"), "error_code": "HG_INVALID_CREDENTIALS"}
 
             # Iterate through all of the possible merge fields, if one is None
             # then it is removed from the dictionary
             keys_to_remove = []
             for field, value in merge_fields.items():
-                if value == None:
+                if value is None:
                     keys_to_remove.append(field)
             
             for key in keys_to_remove:
@@ -396,33 +392,27 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
 
     def make_batch_request(self, records):
         if self.stream_name.lower() in self.contact_names:
-            if self.list_id is not None:
-                if records:
-                    try:
-                        client = MailchimpMarketing.Client()
-                        client.set_config(
-                            {
-                                "access_token": self.config.get("access_token"),
-                                "server": self.get_server(),
-                            }
-                        )
+            if records:
+                try:
+                    client = MailchimpMarketing.Client()
+                    client.set_config(
+                        {
+                            "access_token": self.config.get("access_token"),
+                            "server": self.get_server(),
+                        }
+                    )
 
-                        response = client.lists.batch_list_members(
-                            self.list_id,
-                            {"members": records, "update_existing": True},
-                        )
+                    response = client.lists.batch_list_members(
+                        self.list_id,
+                        {"members": records, "update_existing": True},
+                    )
 
-                        return response
-                    except ApiClientError as error:
-                        custom_message_start = "Error: None of the records went through due to error "
-                        custom_message_end = ", no state available."
-                        handle_call_api_error(self.logger, error, custom_message_start, custom_message_end)
-                else:
-                    return {}
-            else:
-                raise Exception(
-                    f"Failed to post because there was no list ID found for the list name {self.config.get('list_name')}!"
-                )
+                    return response
+                except ApiClientError as error:
+                    custom_message_start = "Error: None of the records went through due to error "
+                    custom_message_end = ", no state available."
+                    handle_call_api_error(self.logger, error, custom_message_start, custom_message_end)
+
 
     def handle_batch_response(self, response, map_errors) -> dict:
         """
@@ -479,7 +469,7 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
 
         response = self.make_batch_request(records)
 
-        result = self.handle_batch_response(response, map_errors)
+        result = self.handle_batch_response(response or {}, map_errors)
 
         for state in result.get("state_updates", list()):
             self.update_state(state)
@@ -530,7 +520,7 @@ class FallbackSink(BaseSink, HotglueSink):
                         f"No email found for record {record}, email is a required field."
                     )
                 # get list id
-                list_id = self.get_list_id()
+                list_id = self.list_id
 
                 # using create or update endpoint for contacts
                 method = "PUT"
@@ -565,7 +555,7 @@ class CustomFieldsSink(FallbackSink):
 
     @property
     def endpoint(self) -> str:
-        list_id = self.get_list_id()
+        list_id = self.list_id
         return f"/lists/{list_id}/merge-fields"
 
     update_method = "PATCH"
