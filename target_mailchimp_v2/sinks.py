@@ -10,6 +10,8 @@ from hotglue_etl_exceptions import InvalidCredentialsError, InvalidPayloadError
 from hotglue_singer_sdk.exceptions import RetriableAPIError
 
 def classify_batch_error_or_false(error: dict):
+    if error.get("error_code") == "HG_INVALID_CREDENTIALS":
+        return {"hg_error_class": InvalidCredentialsError.__name__}
     if error.get("error_code") in ["ERROR_GENERIC", "HG_EMAIL_REQUIRED", "HG_ADDRESS_FORMAT_ERROR", "HG_LIST_ITEM_FORMAT_ERROR", "HG_GROUP_TITLE_NOT_FOUND", "HG_ADDRESS_MISSING_FIELDS"]:
         return {"hg_error_class": InvalidPayloadError.__name__}
     return False
