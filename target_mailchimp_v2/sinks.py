@@ -69,9 +69,8 @@ class BaseSink(HotglueBaseSink):
         
         # Otherwise, try OAuth metadata endpoint
         header = {"Authorization": f"OAuth {access_token}"}
-        metadata = requests.get(
-            "https://login.mailchimp.com/oauth2/metadata", headers=header
-        ).json()
+        metadata_response = self.request_api("GET", "https://login.mailchimp.com/oauth2/metadata", headers=header)
+        metadata = metadata_response.json()
 
         if "error" in metadata:
             if (metadata["error"] == "invalid_token"):
