@@ -468,7 +468,31 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
         map_errors = [rec for rec in records if "error" in rec]
         records = [rec for rec in records if "error" not in rec]
 
-        response = self.make_batch_request(records)
+        response = None
+        try:
+            response = self.make_batch_request(records)
+        except InvalidPayloadError as e:
+            map_errors.extend(
+                [
+                    {
+                        "error": f"Invalid payload error: {e}",
+                        "externalId": self.external_ids_dict.get(rec.get("email_address", "").lower()),
+                        "error_code": "ERROR_GENERIC"
+                    }
+                    for rec in records
+                ]
+            )
+        except InvalidCredentialsError as e:
+            map_errors.extend(
+                [
+                    {
+                        "error": f"Invalid credentials: {e}",
+                        "externalId": self.external_ids_dict.get(rec.get("email_address", "").lower()),
+                        "error_code": "HG_INVALID_CREDENTIALS"
+                    }
+                    for rec in records
+                ]
+            )
 
         result = self.handle_batch_response(response or {}, map_errors)
 
