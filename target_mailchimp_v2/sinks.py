@@ -2,6 +2,7 @@
 
 
 from functools import cached_property
+import backoff
 import mailchimp_marketing as MailchimpMarketing
 import requests
 from mailchimp_marketing.api_client import ApiClientError
@@ -22,13 +23,17 @@ def handle_call_api_error(logger, error: ApiClientError, custom_message_start: s
     error_message = error.text or str(error)
     custom_error_message = custom_message_start + error_message + custom_message_end
 
+    logger.exception("Error status code: {status_code}: {custom_error_message}".format(status_code=status_code, custom_error_message=custom_error_message))
+
     if status_code is not None:
         if (status_code == 401 or status_code == 403):
             raise InvalidCredentialsError(custom_error_message)
         if (status_code == 400):
             raise InvalidPayloadError(custom_error_message)
+        if (status_code >= 500 or status_code == 429):
+            raise RetriableAPIError(custom_error_message)
 
-    logger.exception("Error: {}".format(custom_error_message))
+
 
     if (custom_error_message != error_message):
         raise Exception(custom_error_message)
@@ -88,6 +93,12 @@ class BaseSink(HotglueBaseSink):
         return self.server
 
     @cached_property
+    @backoff.on_exception(
+        backoff.expo,
+        RetriableAPIError,
+        max_tries=5,
+        factor=2,
+    )
     def list_id(self):
 
         config_name = self.config.get("list_name")
@@ -391,6 +402,13 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
             self.external_ids_dict[record["email_address"].lower()] = record.get("externalId", record["email_address"])
             return record
 
+    
+    @backoff.on_exception(
+        backoff.expo,
+        RetriableAPIError,
+        max_tries=5,
+        factor=2,
+    )
     def make_batch_request(self, records):
         if self.stream_name.lower() in self.contact_names:
             if records:
