@@ -147,10 +147,7 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
     server = None
     custom_fields = None
     external_ids_dict = {}
-
-    @property
-    def endpoint(self) -> str:
-        raise ""
+    endpoint = "" # this tap uses an api client library
 
     @property
     def unified_schema(self):
