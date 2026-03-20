@@ -52,6 +52,7 @@ jobs:
       - name: Setup and run tests
         env:
           BRANCH_NAME: ${{ github.head_ref }}
+          S3_SEGMENT: ${{ github.head_ref || github.ref_name }}
         run: |
           cd test-framework
           # Try to switch to the same branch as the current PR
@@ -86,7 +87,7 @@ jobs:
           aws configure set region us-east-1
 
           # Upload to S3
-          S3_KEY="${{ secrets.SMOKETEST_S3_KEY_PREFIX }}/${{ github.event.repository.name }}/${BRANCH_NAME//\//_}/${TIMESTAMP}.${{ github.sha }}.log"
+          S3_KEY="${{ secrets.SMOKETEST_S3_KEY_PREFIX }}/${{ github.event.repository.name }}/${S3_SEGMENT//\//_}/${TIMESTAMP}.${{ github.sha }}.log"
           aws s3 cp "$OUTPUT_FILE" "s3://${{ secrets.SMOKETEST_S3_BUCKET }}/${S3_KEY}"
 
           # Exit based on test status
