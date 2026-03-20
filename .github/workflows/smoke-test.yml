@@ -50,15 +50,16 @@ jobs:
 
 
       - name: Setup and run tests
+        env:
+          BRANCH_NAME: ${{ github.head_ref }}
         run: |
           cd test-framework
           # Try to switch to the same branch as the current PR
-          BRANCH_NAME=${{ github.head_ref }}
           echo "BRANCH_NAME: $BRANCH_NAME"
           echo "Available branches in test-framework:"
           git branch -a
-          if git show-ref --verify refs/remotes/origin/$BRANCH_NAME; then
-            git checkout $BRANCH_NAME
+          if git show-ref --verify "refs/remotes/origin/${BRANCH_NAME}"; then
+            git checkout "$BRANCH_NAME"
           else
             echo "Branch $BRANCH_NAME not found in test-framework repository"
             git checkout main
