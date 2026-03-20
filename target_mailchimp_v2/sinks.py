@@ -440,11 +440,18 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
         This key should be an array of all state updates
         """
         state_updates = []
-        members = response.get("new_members", []) + response.get("updated_members", [])
-
-        for member in members:
+        
+        for member in response.get("new_members", []):
             state_updates.append({
                 "success": True,
+                "id": member["id"],
+                "externalId": self.external_ids_dict.get(member.get("email_address", "").lower())
+            })
+
+        for member in response.get("updated_members", []):
+            state_updates.append({
+                "success": True,
+                "is_updated": True,
                 "id": member["id"],
                 "externalId": self.external_ids_dict.get(member.get("email_address", "").lower())
             })
