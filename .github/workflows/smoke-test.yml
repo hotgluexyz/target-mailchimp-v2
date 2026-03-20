@@ -6,10 +6,11 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
   workflow_dispatch:
-    description: 'Run smoke tests manually'
-  push:
-    branches:
-      - main
+    inputs:
+      branch:
+        description: 'Branch to test'
+        required: true
+        default: 'main'
 
 jobs:
   smoke-test:
@@ -45,7 +46,6 @@ jobs:
           python -m venv .venv
           source .venv/bin/activate
           pip install .
-          pip install deepdiff
           deactivate
 
 
