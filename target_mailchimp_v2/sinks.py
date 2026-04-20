@@ -183,7 +183,7 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
         try:
             return client.call_api(resource_path=endpoint, method="GET")
         except ApiClientError as error:
-            status_code = error.status_code if hasattr(error, "status_code") else error.status if hasattr(error, "status") else None
+            status_code = error.status_code if hasattr(error, "status_code") else None
             if status_code == 404:
                 # No existing member to preserve fields from.
                 return None
@@ -458,14 +458,14 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
             if not record.get("status"):
                 record["status_if_new"] = "subscribed"
 
-            try:
-                record = self._preserve_existing_merge_fields(record)
-            except InvalidCredentialsError as e:
-                return {"error": f"Invalid credentials: {e}", "externalId": record.get("externalId"), "error_code": "HG_INVALID_CREDENTIALS"}
-            except InvalidPayloadError as e:
-                return {"error": f"Invalid payload error: {e}", "externalId": record.get("externalId"), "error_code": "ERROR_GENERIC"}
-            except RetriableAPIError as e:
-                return {"error": f"Retriable API error: {e}", "externalId": record.get("externalId"), "error_code": "ERROR_GENERIC"}
+            only_upsert_empty_fields = self.config.get("only_upsert_empty_fields", False)
+            if only_upsert_empty_fields:
+                try:
+                    record = self._preserve_existing_merge_fields(record)
+                except InvalidCredentialsError as e:
+                    return {"error": f"Invalid credentials: {e}", "externalId": record.get("externalId"), "error_code": "HG_INVALID_CREDENTIALS"}
+                except InvalidPayloadError as e:
+                    return {"error": f"Invalid payload error: {e}", "externalId": record.get("externalId"), "error_code": "ERROR_GENERIC"}
             
             # validate address required fields
             if record.get("merge_fields").get("ADDRESS"):
