@@ -256,6 +256,38 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
             return output
         elif input or input in allowed_values:
             return input
+    
+    def _process_raw_batch_record(self, record: dict, index: int) -> dict:
+        # validate if email has been provided, it's a required field
+        if not record.get("email_address"):
+            return({"error":"Email was not provided and it's a required value", "externalId": record.get("externalId"), "error_code": "HG_EMAIL_REQUIRED"})
+        
+        if not record.get("status"):
+            record["status_if_new"] = "subscribed"
+
+        only_upsert_empty_fields = self.config.get("only_upsert_empty_fields", False)
+        if only_upsert_empty_fields:
+            try:
+                record = self._preserve_existing_merge_fields(record)
+            except InvalidCredentialsError as e:
+                return {"error": f"Invalid credentials: {e}", "externalId": record.get("externalId"), "error_code": "HG_INVALID_CREDENTIALS"}
+            except InvalidPayloadError as e:
+                return {"error": f"Invalid payload error: {e}", "externalId": record.get("externalId"), "error_code": "ERROR_GENERIC"}
+        
+        # validate address required fields
+        if record.get("merge_fields").get("ADDRESS"):
+            required_fields = ["addr1", "city", "state", "zip"]
+            missing_fields = []
+            address_fields = record.get("merge_fields").get("ADDRESS")
+            for key in required_fields:
+                if key not in address_fields or not address_fields.get(key):
+                    missing_fields.append(key)    
+            if missing_fields:
+                return({"error":f"Missing required address fields: {','.join(missing_fields)}.", "externalId": record.get("externalId"), "error_code": "HG_ADDRESS_MISSING_FIELDS"})
+        
+        # get external id from record
+        self.external_ids_dict[record["email_address"].lower()] = record.get("externalId", record["email_address"])
+        return record
         
     def handle_custom_fields(self, client, record_custom_fields, merge_fields):
         #Check and populate custom fields as merge fields
@@ -458,36 +490,7 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
             return member_dict
         
         else:
-            # validate if email has been provided, it's a required field
-            if not record.get("email_address"):
-                return({"error":"Email was not provided and it's a required value", "externalId": record.get("externalId"), "error_code": "HG_EMAIL_REQUIRED"})
-            
-            if not record.get("status"):
-                record["status_if_new"] = "subscribed"
-
-            only_upsert_empty_fields = self.config.get("only_upsert_empty_fields", False)
-            if only_upsert_empty_fields:
-                try:
-                    record = self._preserve_existing_merge_fields(record)
-                except InvalidCredentialsError as e:
-                    return {"error": f"Invalid credentials: {e}", "externalId": record.get("externalId"), "error_code": "HG_INVALID_CREDENTIALS"}
-                except InvalidPayloadError as e:
-                    return {"error": f"Invalid payload error: {e}", "externalId": record.get("externalId"), "error_code": "ERROR_GENERIC"}
-            
-            # validate address required fields
-            if record.get("merge_fields").get("ADDRESS"):
-                required_fields = ["addr1", "city", "state", "zip"]
-                missing_fields = []
-                address_fields = record.get("merge_fields").get("ADDRESS")
-                for key in required_fields:
-                    if key not in address_fields or not address_fields.get(key):
-                        missing_fields.append(key)    
-                if missing_fields:
-                    return({"error":f"Missing required address fields: {','.join(missing_fields)}.", "externalId": record.get("externalId"), "error_code": "HG_ADDRESS_MISSING_FIELDS"})
-            
-            # get external id from record
-            self.external_ids_dict[record["email_address"].lower()] = record.get("externalId", record["email_address"])
-            return record
+            return self._process_raw_batch_record(record, index)
 
     
     @backoff.on_exception(
