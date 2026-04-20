@@ -21,6 +21,7 @@ pipx install target-mailchimp-v2
 | `subscribe_status` | No | `"subscribed"` | Default subscription status for contacts. Valid values: `subscribed`, `unsubscribed`, `cleaned`, `pending`, `transactional`. |
 | `process_batch_contacts` | No | `true` | Controls record shaping inside `MailChimpV2Sink` for contact streams. When `true`, contact records are transformed from a unified schema into Mailchimp format. When `false`, records are treated as already-native Mailchimp payloads (no unified transform). |
 | `use_fallback_sink` | No | `false` | When `true`, forces use of the FallbackSink (single record processing) instead of MailChimpV2Sink (batch processing) for contact streams. |
+| `only_upsert_empty_fields` | No | `false` | Controls overwrite protection for existing Mailchimp merge fields in raw batch contact mode (`process_batch_contacts=false`). Accepts `true`, `false`, or a list of merge field tags (for example `["FNAME", "PHONE"]`). |
 
 ### MailChimpV2Sink Behavior
 
@@ -42,11 +43,26 @@ The `MailChimpV2Sink` handles batch processing for contact-related streams (`cus
   - Records are passed through without transformation
   - Expects records to already be in Mailchimp's native format
   - Still uses batch processing via `process_batch`.
+  - Supports `only_upsert_empty_fields` for merge field preservation.
 
 - **`use_fallback_sink: true`**
   - Bypasses batch processing entirely
   - Uses PUT requests to the `/lists/{list_id}/members/{email}` endpoint
   - Useful for handling edge cases or when batch processing is not desired
+
+- **`only_upsert_empty_fields` (raw batch mode only)**
+  - `false` (default): incoming merge field values overwrite existing values.
+  - `true`: preserve all existing non-empty merge fields.
+  - `["TAG1", "TAG2"]`: preserve only listed merge field tags when existing values are non-empty.
+
+Example:
+
+```json
+{
+  "process_batch_contacts": false,
+  "only_upsert_empty_fields": ["FNAME", "PHONE"]
+}
+```
 
 #### Record-Level Overrides
 

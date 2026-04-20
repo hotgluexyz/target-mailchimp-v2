@@ -160,6 +160,80 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
     def preprocess_record(self, record: dict, context: dict) -> dict:
         return record
 
+    @staticmethod
+    def _is_non_empty_value(value) -> bool:
+        if value is None:
+            return False
+        if isinstance(value, str):
+            return value != ""
+        if isinstance(value, (list, dict)):
+            return len(value) > 0
+        return True
+
+    def _get_existing_member_by_email(self, email: str):
+        client = MailchimpMarketing.ApiClient()
+        client.set_config(
+            {
+                "access_token": self.config.get("access_token"),
+                "server": self.get_server(),
+            }
+        )
+        endpoint = f"/lists/{self.list_id}/members/{email}"
+
+        try:
+            return client.call_api(resource_path=endpoint, method="GET")
+        except ApiClientError as error:
+            status_code = error.status_code if hasattr(error, "status_code") else error.status if hasattr(error, "status") else None
+            if status_code == 404:
+                # No existing member to preserve fields from.
+                return None
+            handle_call_api_error(self.logger, error)
+
+    def _get_fields_to_preserve(self, existing_merge_fields: dict) -> set[str]:
+        config_value = self.config.get("only_upsert_empty_fields", False)
+        if not isinstance(existing_merge_fields, dict):
+            return set()
+
+        if isinstance(config_value, bool):
+            if not config_value:
+                return set()
+            return {
+                field
+                for field, value in existing_merge_fields.items()
+                if self._is_non_empty_value(value)
+            }
+
+        if isinstance(config_value, list):
+            return {
+                field
+                for field in config_value
+                if isinstance(field, str)
+                and self._is_non_empty_value(existing_merge_fields.get(field))
+            }
+
+        return set()
+
+    def _preserve_existing_merge_fields(self, record: dict) -> dict:
+        email = get_email_if_exists(record)
+        if not email:
+            return record
+
+        existing_member = self._get_existing_member_by_email(email)
+        if not existing_member:
+            return record
+
+        existing_merge_fields = existing_member.get("merge_fields") or {}
+        incoming_merge_fields = record.get("merge_fields") or {}
+
+        if not isinstance(existing_merge_fields, dict) or not isinstance(incoming_merge_fields, dict):
+            return record
+
+        for field in self._get_fields_to_preserve(existing_merge_fields):
+            incoming_merge_fields[field] = existing_merge_fields[field]
+
+        record["merge_fields"] = incoming_merge_fields
+        return record
+
     def clean_convert(self, input):
         allowed_values = [0, "", False]
         if isinstance(input, list):
@@ -383,6 +457,15 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
             
             if not record.get("status"):
                 record["status_if_new"] = "subscribed"
+
+            try:
+                record = self._preserve_existing_merge_fields(record)
+            except InvalidCredentialsError as e:
+                return {"error": f"Invalid credentials: {e}", "externalId": record.get("externalId"), "error_code": "HG_INVALID_CREDENTIALS"}
+            except InvalidPayloadError as e:
+                return {"error": f"Invalid payload error: {e}", "externalId": record.get("externalId"), "error_code": "ERROR_GENERIC"}
+            except RetriableAPIError as e:
+                return {"error": f"Retriable API error: {e}", "externalId": record.get("externalId"), "error_code": "ERROR_GENERIC"}
             
             # validate address required fields
             if record.get("merge_fields").get("ADDRESS"):
