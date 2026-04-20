@@ -148,6 +148,7 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
     custom_fields = None
     external_ids_dict = {}
     endpoint = "" # this tap uses an api client library
+    _lookup_api_client = None
 
     @property
     def unified_schema(self):
@@ -170,16 +171,24 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
             return len(value) > 0
         return True
 
-    def _get_existing_member_by_email(self, email: str):
-        client = MailchimpMarketing.ApiClient()
-        client.set_config(
-            {
-                "access_token": self.config.get("access_token"),
-                "server": self.get_server(),
-            }
-        )
-        endpoint = f"/lists/{self.list_id}/members/{email}"
+    def _get_lookup_api_client(self):
+        if self._lookup_api_client is None:
+            self._lookup_api_client = MailchimpMarketing.ApiClient()
+            self._lookup_api_client.set_config(
+                {"access_token": self.config.get("access_token"), "server": self.get_server()}
+            )
+        return self._lookup_api_client
 
+    @backoff.on_exception(
+        backoff.expo,
+        RetriableAPIError,
+        max_tries=5,
+        factor=2,
+    )
+    def _get_existing_member_by_email(self, email: str):
+        client = self._get_lookup_api_client()
+
+        endpoint = f"/lists/{self.list_id}/members/{email}"
         try:
             return client.call_api(resource_path=endpoint, method="GET")
         except ApiClientError as error:
@@ -191,8 +200,6 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
 
     def _get_fields_to_preserve(self, existing_merge_fields: dict) -> set[str]:
         config_value = self.config.get("only_upsert_empty_fields", False)
-        if not isinstance(existing_merge_fields, dict):
-            return set()
 
         if isinstance(config_value, bool):
             if not config_value:
