@@ -19,7 +19,7 @@ pipx install target-mailchimp-v2
 | `access_token` | Yes | - | OAuth access token or Mailchimp API key (format: `key-datacenter`, e.g., `abc123-us22`) |
 | `list_name` | No | - | Name of the Mailchimp list/audience to sync contacts to. If not set, the first list found is used. |
 | `subscribe_status` | No | `"subscribed"` | Default subscription status for contacts. Valid values: `subscribed`, `unsubscribed`, `cleaned`, `pending`, `transactional`. |
-| `process_batch_contacts` | No | `true` | When `true`, contact records are transformed from a unified schema into Mailchimp format. When `false`, records are passed through as-is and the fallback sink is used. |
+| `process_batch_contacts` | No | `true` | Controls record shaping inside `MailChimpV2Sink` for contact streams. When `true`, contact records are transformed from a unified schema into Mailchimp format. When `false`, records are treated as already-native Mailchimp payloads (no unified transform). |
 | `use_fallback_sink` | No | `false` | When `true`, forces use of the FallbackSink (single record processing) instead of MailChimpV2Sink (batch processing) for contact streams. |
 
 ### MailChimpV2Sink Behavior
@@ -41,7 +41,7 @@ The `MailChimpV2Sink` handles batch processing for contact-related streams (`cus
 - **`process_batch_contacts: false`**
   - Records are passed through without transformation
   - Expects records to already be in Mailchimp's native format
-  - Uses the FallbackSink for single-record processing
+  - Still uses batch processing via `batch_list_members`.
 
 - **`use_fallback_sink: true`**
   - Bypasses batch processing entirely

@@ -523,7 +523,7 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
 
 
 class FallbackSink(BaseSink, HotglueSink):
-    """Precoro target sink class."""
+    """Generic fallback sink for non-batch writes and explicit contact fallback mode."""
 
     primary_key = "id"
 
