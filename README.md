@@ -41,7 +41,7 @@ The `MailChimpV2Sink` handles batch processing for contact-related streams (`cus
 - **`process_batch_contacts: false`**
   - Records are passed through without transformation
   - Expects records to already be in Mailchimp's native format
-  - Still uses batch processing via `batch_list_members`.
+  - Still uses batch processing via `process_batch`.
 
 - **`use_fallback_sink: true`**
   - Bypasses batch processing entirely
