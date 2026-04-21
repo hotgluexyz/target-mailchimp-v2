@@ -21,6 +21,22 @@ class TargetMailChimpV2(TargetHotglue):
             required=True,
         ),
         th.Property("list_name", th.StringType, required=False),
+        th.Property(
+            "only_upsert_empty_fields",
+            th.CustomType(
+                {
+                    "anyOf": [
+                        {"type": "boolean"},
+                        {"type": "array", "items": {"type": "string"}},
+                    ]
+                }
+            ),
+            required=False,
+            description=(
+                "When true, preserve all non-empty existing merge fields during contact upserts. "
+                "When a list is provided, preserve only those merge field tags."
+            ),
+        ),
     ).to_dict()
     default_sink_class = MailChimpV2Sink
     SINK_TYPES = []
