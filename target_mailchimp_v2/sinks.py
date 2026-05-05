@@ -720,13 +720,17 @@ class CustomFieldsSink(FallbackSink):
         )
 
         merge_fields = []
+        offset = 0
         while True:
             try:
                 response = client.call_api(
-                    resource_path=endpoint, method="GET", params={"count": 1000}
+                    resource_path=endpoint, method="GET", params={"count": 1000, "offset": offset}
                 )
                 merge_fields.extend(response.get("merge_fields", []))
+                offset += 1000
                 if len(response.get("merge_fields", [])) < 1000:
+                    break
+                if offset >= response.get("total_items", 0):
                     break
             except ApiClientError as e:
                 handle_call_api_error(self.logger, e)
