@@ -749,6 +749,7 @@ class CustomFieldsSink(FallbackSink):
                 # get existing merge field id
                 existing_merge_fields = self.get_existing_merge_fields(self.endpoint)
                 if existing_merge_fields:
-                    merge_field_id = next((field.get("merge_id") for field in existing_merge_fields if field.get("tag") == record.get("tag")), None)
+                    tag = record.get("tag", "")[:10] # tags are limited to 10 characters
+                    merge_field_id = next((field.get("merge_id") for field in existing_merge_fields if field.get("tag") == tag), None)
                     return merge_field_id, True, {"existing": True}
             raise e
