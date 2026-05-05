@@ -9,6 +9,7 @@ from mailchimp_marketing.api_client import ApiClientError
 from hotglue_singer_sdk.target_sdk.client import HotglueBatchSink, HotglueSink, HotglueBaseSink
 from hotglue_etl_exceptions import InvalidCredentialsError, InvalidPayloadError
 from hotglue_singer_sdk.exceptions import RetriableAPIError
+import re
 
 def classify_batch_error_or_false(error: dict):
     if error.get("error_code") == "HG_INVALID_CREDENTIALS":
@@ -16,6 +17,9 @@ def classify_batch_error_or_false(error: dict):
     if error.get("error_code") in ["ERROR_GENERIC", "HG_EMAIL_REQUIRED", "HG_ADDRESS_FORMAT_ERROR", "HG_LIST_ITEM_FORMAT_ERROR", "HG_GROUP_TITLE_NOT_FOUND", "HG_ADDRESS_MISSING_FIELDS"]:
         return {"hg_error_class": InvalidPayloadError.__name__}
     return False
+
+def check_text_for_pattern(pattern, text):
+    return bool(re.search(pattern, text))
 
 def handle_call_api_error(logger, error: ApiClientError, custom_message_start: str = "", custom_message_end: str = "") -> None:
 
@@ -700,3 +704,47 @@ class CustomFieldsSink(FallbackSink):
 
     update_method = "PATCH"
     primary_key = "merge_id"
+    existing_merge_fields = None
+
+    def get_existing_merge_fields(self, endpoint: str):
+        if self.existing_merge_fields is not None and len(self.existing_merge_fields) > 0:
+            return self.existing_merge_fields
+
+        # get all merge fields
+        client = MailchimpMarketing.ApiClient()
+        client.set_config(
+            {
+                "access_token": self.config.get("access_token"),
+                "server": self.get_server(),
+            }
+        )
+
+        merge_fields = []
+        while True:
+            try:
+                response = client.call_api(
+                    resource_path=endpoint, method="GET", params={"count": 1000}
+                )
+                merge_fields.extend(response.get("merge_fields", []))
+                if len(response.get("merge_fields", [])) < 1000:
+                    break
+            except ApiClientError as e:
+                handle_call_api_error(self.logger, e)
+        self.existing_merge_fields = merge_fields
+        return self.existing_merge_fields
+
+    def upsert_record(self, record: dict, context: dict):
+        try:
+            return super().upsert_record(record, context)
+        except Exception as e:
+            # for custom fields, if merge field already exists, return existing
+            pattern = r'A Merge Field with the tag \\"(.+?)\\" already exists for this list\.'
+            if check_text_for_pattern(pattern, str(e)):
+                self.logger.warning(str(e))
+
+                # get existing merge field id
+                existing_merge_fields = self.get_existing_merge_fields(self.endpoint)
+                if existing_merge_fields:
+                    merge_field_id = next((field.get("merge_id") for field in existing_merge_fields if field.get("tag") == record.get("tag")), None)
+                    return merge_field_id, True, {"existing": True}
+            raise e
