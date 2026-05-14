@@ -24,7 +24,7 @@ def check_text_for_pattern(pattern, text):
 def handle_call_api_error(logger, error: ApiClientError, custom_message_start: str = "", custom_message_end: str = "") -> None:
 
     status_code = error.status_code if hasattr(error,'status_code') else error.status if hasattr(error,'status') else None
-    error_message = str(error.text) if isinstance(error.text, str) and error.text else str(error)
+    error_message = error.text if isinstance(error.text, str) and error.text else str(error)
     custom_error_message = custom_message_start + error_message + custom_message_end
 
     logger.exception("Error status code: {status_code}: {custom_error_message}".format(status_code=status_code, custom_error_message=custom_error_message))
@@ -100,7 +100,7 @@ class BaseSink(HotglueBaseSink):
 
     def validate_email(self, email: str):
         email = email.strip()
-        if not check_text_for_pattern(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$", email):
+        if not check_text_for_pattern(r"^[a-zA-Z0-9_%+-]+(?:\.[a-zA-Z0-9_%+-]+)*@[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$", email):
             return False
         return True
 
