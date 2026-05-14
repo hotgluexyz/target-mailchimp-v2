@@ -100,7 +100,7 @@ class BaseSink(HotglueBaseSink):
 
     def validate_email(self, email: str):
         email = email.strip()
-        if not check_text_for_pattern(r"^[a-zA-Z0-9_%+-]+(?:\.[a-zA-Z0-9_%+-]+)*@[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$", email):
+        if not check_text_for_pattern(r"^[a-zA-Z0-9_%+-]+(?:[._%+-][a-zA-Z0-9]+)*@[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$", email):
             return False
         return True
 
