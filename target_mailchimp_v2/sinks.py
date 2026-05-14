@@ -14,7 +14,7 @@ import re
 def classify_batch_error_or_false(error: dict):
     if error.get("error_code") == "HG_INVALID_CREDENTIALS":
         return {"hg_error_class": InvalidCredentialsError.__name__}
-    if error.get("error_code") in ["ERROR_GENERIC", "HG_EMAIL_REQUIRED", "HG_ADDRESS_FORMAT_ERROR", "HG_LIST_ITEM_FORMAT_ERROR", "HG_GROUP_TITLE_NOT_FOUND", "HG_ADDRESS_MISSING_FIELDS"]:
+    if error.get("error_code") in ["ERROR_GENERIC", "HG_EMAIL_REQUIRED", "HG_ADDRESS_FORMAT_ERROR", "HG_LIST_ITEM_FORMAT_ERROR", "HG_GROUP_TITLE_NOT_FOUND", "HG_ADDRESS_MISSING_FIELDS", "HG_EMAIL_INVALID"]:
         return {"hg_error_class": InvalidPayloadError.__name__}
     return False
 
@@ -24,7 +24,7 @@ def check_text_for_pattern(pattern, text):
 def handle_call_api_error(logger, error: ApiClientError, custom_message_start: str = "", custom_message_end: str = "") -> None:
 
     status_code = error.status_code if hasattr(error,'status_code') else error.status if hasattr(error,'status') else None
-    error_message = error.text or str(error)
+    error_message = str(error.text) if error.text is not None else str(error)
     custom_error_message = custom_message_start + error_message + custom_message_end
 
     logger.exception("Error status code: {status_code}: {custom_error_message}".format(status_code=status_code, custom_error_message=custom_error_message))
@@ -36,8 +36,10 @@ def handle_call_api_error(logger, error: ApiClientError, custom_message_start: s
             raise InvalidPayloadError(custom_error_message)
         if (status_code >= 500 or status_code == 429):
             raise RetriableAPIError(custom_error_message)
-
-
+    else:
+        # error is always an ApiClientError so checks like isinstance(error, requests.exceptions.RequestException) are always false
+        # if there's no status code, raise a retriable error
+        raise RetriableAPIError(custom_error_message)
 
     if (custom_error_message != error_message):
         raise Exception(custom_error_message)
@@ -95,6 +97,11 @@ class BaseSink(HotglueBaseSink):
             self.server = self.get_server_meta_data()
 
         return self.server
+
+    def validate_email(self, email: str):
+        if not check_text_for_pattern(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$", email):
+            return False
+        return True
 
     @cached_property
     @backoff.on_exception(
@@ -265,6 +272,10 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
         # validate if email has been provided, it's a required field
         if not record.get("email_address"):
             return({"error":"Email was not provided and it's a required value", "externalId": record.get("externalId"), "error_code": "HG_EMAIL_REQUIRED"})
+        
+        # validate with regex if email is valid
+        if not self.validate_email(record.get("email_address")):
+            return({"error":f"Email '{record.get('email_address')}' is not a valid email address", "externalId": record.get("externalId"), "error_code": "HG_EMAIL_INVALID"})
         
         if not record.get("status"):
             record["status_if_new"] = "subscribed"
