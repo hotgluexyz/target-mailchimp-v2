@@ -121,7 +121,7 @@ class BaseSink(HotglueBaseSink):
             client.set_config(
                 {"access_token": self.config.get("access_token"), "server": server}
             )
-            response = client.lists.get_all_lists()
+            response = client.lists.get_all_lists(count=1000)
             self.logger.info(response)
 
             if "lists" in response:
