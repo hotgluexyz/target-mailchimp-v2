@@ -1,0 +1,14 @@
+{
+    "client_id": "1234",
+    "client_secret": "1234",
+    "refresh_token": null,
+    "access_token": "1234",
+    "expires_in": 0,
+    "start_date": "2005-01-01T00:00:00Z",
+    "redirect_uri": "https://qa.hotglue.xyz/callback",
+    "api_type": "BULK",
+    "select_fields_by_default": true,
+    "api_key": "1234",
+    "domain": "hotglue.xyz",
+    "hideText": false
+}
