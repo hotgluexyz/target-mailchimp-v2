@@ -1,12 +1,14 @@
 """Colocated smoke-test runner for target-mailchimp-v2."""
 
+from typing import ClassVar
+
 import vcr
 from hotglue_smoke_test.vcr.target import VCRTargetTestRunner
 
 
 class TargetMailChimpV2TestRunner(VCRTargetTestRunner):
     # Mailchimp returns the audience ID in /lists, then uses it in later paths.
-    PRESERVE_KEYS = {
+    PRESERVE_KEYS: ClassVar[set[str]] = {
         "dc",
         "id",
         "list_id",
