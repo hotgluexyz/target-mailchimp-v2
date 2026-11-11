@@ -306,6 +306,13 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
         return record
         
     def handle_custom_fields(self, client, record_custom_fields, merge_fields):
+        # custom_fields can be missing, null or empty in the record: nothing to map
+        if not record_custom_fields:
+            return merge_fields
+        if not isinstance(record_custom_fields, list):
+            self.logger.info("Skipping custom fields, custom fields should be a list of dicts")
+            return merge_fields
+
         #Check and populate custom fields as merge fields
         if self.custom_fields is None:
             try:
@@ -314,8 +321,6 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
                 handle_call_api_error(self.logger, error)
             self.custom_fields = {field["name"]: field["tag"] for field in _merge_fields["merge_fields"]}
 
-        if not isinstance(record_custom_fields, list):
-            self.logger.info("Skipping custom fields, custom fields should be a list of dicts")
         for field in record_custom_fields:
             if not isinstance(field, dict):
                 self.logger.info(f"Custom field format is incorrect, skipping custom field {field}")
