@@ -1,0 +1,15 @@
+{
+    "start_date": "2000-01-01T00:00:00.000Z",
+    "user_agent": "hotglue <hello@hotglue.xyz>",
+    "access_token": "9e1***",
+    "api_key": "ngI***",
+    "client_id": "261***",
+    "client_secret": "bde***",
+    "refresh_token": null,
+    "expires_in": 0,
+    "redirect_uri": "https://hotglue.xyz/callback",
+    "api_type": "BULK",
+    "select_fields_by_default": true,
+    "domain": "hotglue.xyz",
+    "hideText": false
+}
