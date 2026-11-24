@@ -447,6 +447,9 @@ class MailChimpV2Sink(BaseSink, HotglueBatchSink):
                 merge_fields = self.handle_custom_fields(client, record.get("custom_fields", []), merge_fields)
             except InvalidCredentialsError as e:
                 return {"error":f"Invalid credentials: {e}", "externalId": record.get("externalId"), "error_code": "HG_INVALID_CREDENTIALS"}
+            except InvalidPayloadError as e:
+                # e.g. 400 "Merge Max Limit Exceeded" when creating a merge field for a new custom field
+                return {"error":f"Invalid payload error: {e}", "externalId": record.get("externalId"), "error_code": "ERROR_GENERIC"}
 
             # Iterate through all of the possible merge fields, if one is None
             # then it is removed from the dictionary
